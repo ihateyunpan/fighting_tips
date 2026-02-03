@@ -1132,6 +1132,9 @@ function RoundPanel({
 
                     {/* 沙盘排轴 */}
                     <div className="border-t border-gray-100 pt-6">
+                        <div className="text-xs text-gray-500 mb-2">
+                            💡 点亮“KILL”标记的操作为 <span className="font-bold">击杀小怪</span> 的操作。
+                        </div>
                         <OperationsEditor
                             operations={roundData.operations}
                             onChange={(ops) => onUpdateRound({ ...roundData, operations: ops })}
