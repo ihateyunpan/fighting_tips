@@ -54,7 +54,7 @@ function getDeltas(fromState: State, toState: State): string[] {
     const delta2 = toState.count + 20 - fromState.count;
     if (delta2 < 10) ans.push(`+${delta2}`);
     else if (fromState.count + 10 >= 20) {
-        if (toState.count === 0) ans.push(fromState.count > 10 ? "+0*" : "+10");
+        if (toState.count === 0) ans.push("+10");
         else if (toState.count <= 6) ans.push(`+${toState.count}*`);
     }
     return ans;
@@ -662,21 +662,22 @@ function OperationsEditor({
     onClear?: () => void
 }) {
     const [swapSourceIdx, setSwapSourceIdx] = useState<number | null>(null);
-    const [editingState, setEditingState] = useState<{ id: string, field: 'pos' | 'type' } | null>(null);
+    // === 修改 1: 使用 expandedOpId 替代 editingState，控制唯一展开行 ===
+    const [expandedOpId, setExpandedOpId] = useState<string | null>(null);
 
     const dragItem = useRef<number | null>(null);
     const dragOverItem = useRef<number | null>(null);
 
     const isDraggable = useIsDraggable();
 
-    // 点击外部关闭弹窗
+    // === 修改 2: 点击外部（非展开Body区域）关闭展开 ===
     useEffect(() => {
-        const handleClickOutside = () => setEditingState(null);
-        if (editingState) {
-            window.addEventListener('click', handleClickOutside);
+        const handleGlobalClick = () => setExpandedOpId(null);
+        if (expandedOpId) {
+            window.addEventListener('click', handleGlobalClick);
         }
-        return () => window.removeEventListener('click', handleClickOutside);
-    }, [editingState]);
+        return () => window.removeEventListener('click', handleGlobalClick);
+    }, [expandedOpId]);
 
     // === 提取公共逻辑: 移动操作 ===
     const moveOp = (fromIdx: number, toIdx: number) => {
@@ -709,14 +710,14 @@ function OperationsEditor({
 
     // === 点击交换逻辑 (仅在 !isDraggable 时生效) ===
     const handleRowClick = (index: number) => {
-        if (isDraggable) return; // 如果支持拖拽，点击行不触发交换逻辑
+        if (isDraggable) return;
 
         if (swapSourceIdx === null) {
             setSwapSourceIdx(index);
         } else if (swapSourceIdx === index) {
             setSwapSourceIdx(null);
         } else {
-            moveOp(swapSourceIdx, index); // 复用 moveOp
+            moveOp(swapSourceIdx, index);
             setSwapSourceIdx(null);
         }
     };
@@ -732,125 +733,10 @@ function OperationsEditor({
         dragOverItem.current = null;
     };
 
-    // === 修改: 响应式 Tooltip 渲染 ===
-    // 1. 增加 index 参数，用于判断行位置
-    const renderTooltip = (op: Operation, field: 'pos' | 'type', index: number) => {
-        const isPos = field === 'pos';
-
-        // 2. 智能判断位置：如果是最后两行(且不是唯一的一行)，则向上弹出
-        const isNearBottom = index >= operations.length - 2 && index > 0;
-
-        return (
-            <div
-                className={`
-                    z-50 cursor-default
-                    /* Mobile: Modal Backdrop */
-                    fixed inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[1px] p-4
-                    /* Desktop: Tooltip Positioning */
-                    sm:absolute sm:inset-auto sm:left-1/2 sm:-translate-x-1/2 sm:block sm:p-0 sm:bg-transparent sm:backdrop-blur-none sm:w-auto sm:flex-none
-                    
-                    /* === 修改点: 动态垂直定位 (解决底部遮挡) === */
-                    /* isNearBottom ? 向上弹出 (bottom-full + mb-2) : 向下弹出 (top-full + mt-2) */
-                    ${isNearBottom ? 'sm:bottom-full sm:mb-2 sm:top-auto' : 'sm:top-full sm:mt-2'}
-
-                    /* === 动态水平定位 (解决左侧遮挡) === */
-                    ${isPos ? 'sm:left-0 sm:translate-x-0' : 'sm:left-1/2 sm:-translate-x-1/2'}
-                `}
-            >
-                {/* 内容框 */}
-                <div
-                    className={`
-                        bg-white rounded-xl shadow-2xl border border-gray-100 p-4 w-full animate-fade-in flex flex-col gap-4
-                        /* Mobile: 限制最大宽度 */
-                        max-w-[360px] 
-                        /* Desktop: 自适应宽度，最小宽度360px */
-                        sm:w-auto sm:max-w-none sm:min-w-[360px] sm:shadow-xl sm:p-4 sm:text-left
-                    `}
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    {/* Header: 仅移动端显示，桌面端隐藏 */}
-                    <div className="flex justify-between items-center border-b border-gray-100 pb-2 sm:hidden">
-                        <span className="text-sm font-bold text-gray-700">修改操作详情</span>
-                        <button
-                            onClick={() => setEditingState(null)}
-                            className="text-gray-400 hover:text-gray-600 px-2"
-                        >
-                            ✕
-                        </button>
-                    </div>
-
-                    {/* === 第一部分：密探选择 === */}
-                    <div className="flex flex-col gap-2">
-                        {/* Label */}
-                        <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
-                            1. 修改密探
-                        </div>
-
-                        {/* 红绿密探 */}
-                        <div className="flex gap-2">
-                            {(['red', 'green'] as const).map(p => (
-                                <button
-                                    key={p}
-                                    onClick={() => updateOperation(op.id, { position: p })}
-                                    className={`
-                                        flex-1 px-3 py-2 text-xs sm:text-sm font-bold rounded-lg border transition-all whitespace-nowrap
-                                        ${op.position === p
-                                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-md'
-                                        : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}
-                                    `}
-                                >
-                                    {getPosLabel(agentNames, p)}
-                                </button>
-                            ))}
-                        </div>
-                        {/* 1-5号位 */}
-                        <div className="grid grid-cols-5 gap-2">
-                            {[1, 2, 3, 4, 5].map(p => (
-                                <button
-                                    key={p}
-                                    onClick={() => updateOperation(op.id, { position: p })}
-                                    className={`aspect-square flex items-center justify-center text-sm font-bold rounded-lg border transition-all ${
-                                        op.position === p
-                                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-md'
-                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    {p}{agentNames[p - 1] == '' ? '' : `: ${agentNames[p - 1]}`}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* 分割线 (仅视觉) */}
-                    <div className="border-t border-gray-100 sm:border-transparent"></div>
-
-                    {/* === 第二部分：操作选择 === */}
-                    <div className="flex flex-col gap-2">
-                        {/* Label */}
-                        <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
-                            2. 修改操作
-                        </div>
-
-                        <div className="flex gap-2 sm:gap-3">
-                            {(['A', '↑', '↓', '圈'] as const).map(t => (
-                                <button
-                                    key={t}
-                                    onClick={() => updateOperation(op.id, { type: t })}
-                                    className={`flex-1 py-2 text-sm sm:text-base font-bold rounded-lg border transition-all ${
-                                        op.type === t
-                                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-md'
-                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    {t}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                </div>
-            </div>
-        );
+    // === 处理展开/收起 ===
+    const toggleExpand = (e: React.MouseEvent, id: string) => {
+        e.stopPropagation(); // 阻止冒泡，防止触发 Row Swap 或 全局关闭
+        setExpandedOpId(prev => prev === id ? null : id);
     };
 
     return (
@@ -883,11 +769,9 @@ function OperationsEditor({
                         };
                     }
 
-                    const isEditingPos = editingState?.id === op.id && editingState?.field === 'pos';
-                    const isEditingType = editingState?.id === op.id && editingState?.field === 'type';
-
-                    // 计算是否被选中用于交换
+                    // 计算状态
                     const isSwapSelected = !isDraggable && swapSourceIdx === index;
+                    const isExpanded = expandedOpId === op.id;
 
                     return (
                         <div
@@ -897,64 +781,135 @@ function OperationsEditor({
                             onDragEnter={isDraggable ? () => dragOverItem.current = index : undefined}
                             onDragEnd={isDraggable ? handleDragSort : undefined}
                             onDragOver={isDraggable ? e => e.preventDefault() : undefined}
+                            // 点击行触发交换逻辑 (非拖拽模式)
                             onClick={!isDraggable ? () => handleRowClick(index) : undefined}
-
-                            className={`relative flex items-center gap-1 sm:gap-2 border p-1.5 sm:p-2 rounded transition-all select-none
+                            className={`flex flex-col border rounded transition-all select-none overflow-hidden
                                 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}
                                 ${isSwapSelected
                                 ? 'bg-indigo-50/50 border-indigo-300 ring-1 ring-indigo-200'
-                                : 'bg-white border-gray-200 hover:shadow-sm'}
+                                : isExpanded ? 'border-indigo-200 shadow-sm bg-white' : 'bg-white border-gray-200 hover:shadow-sm'}
                             `}
                         >
-                            <span
-                                className="text-gray-300 text-[10px] sm:text-xs w-3 sm:w-4 text-center shrink-0">{index + 1}</span>
-
-                            {showKillBadge && (
-                                <div onClick={onKillClick}
-                                     className={`shrink-0 cursor-pointer text-[10px] px-1.5 py-0.5 rounded border select-none transition-colors ${isKillActive ? 'bg-orange-500 text-white border-orange-600 font-bold' : 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-200'}`}>
-                                    KILL
-                                </div>
-                            )}
-
-                            <div className="relative">
-                                <span
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setEditingState({ id: op.id, field: 'pos' });
-                                    }}
-                                    className={`inline-block text-[10px] sm:text-xs px-1.5 py-0.5 rounded font-bold truncate max-w-[4rem] sm:max-w-none cursor-pointer hover:opacity-80 border border-transparent ${isRedTarget ? 'bg-red-100 text-red-700' : isGreenTarget ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                                    {getPosLabel(agentNames, op.position)}
+                            {/* === 列表行头部 (显示摘要) === */}
+                            <div className="flex items-center gap-1 sm:gap-2 p-1.5 sm:p-2">
+                                <span className="text-gray-300 text-[10px] sm:text-xs w-3 sm:w-4 text-center shrink-0">
+                                    {index + 1}
                                 </span>
-                                {/* 3. 传入 index 参数 */}
-                                {isEditingPos && renderTooltip(op, 'pos', index)}
-                            </div>
 
-                            <div className="relative">
-                                <span
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setEditingState({ id: op.id, field: 'type' });
-                                    }}
-                                    className={`inline-block text-xs sm:text-sm font-mono font-bold text-gray-800 px-2 py-0.5 rounded cursor-pointer hover:bg-gray-100 border border-transparent hover:border-gray-200 transition-colors`}>
-                                    {op.type}
-                                </span>
-                                {/* 3. 传入 index 参数 */}
-                                {isEditingType && renderTooltip(op, 'type', index)}
-                            </div>
-
-                            <div className="ml-auto flex items-center gap-2 sm:gap-3">
-                                {simulationSteps && simulationSteps[index] !== undefined && (
-                                    <div
-                                        className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 min-w-[2.5rem] justify-center font-mono font-bold">
-                                        <span className="opacity-50 font-normal">→</span>
-                                        {simulationSteps[index]}
+                                {showKillBadge && (
+                                    <div onClick={onKillClick}
+                                         className={`shrink-0 cursor-pointer text-[10px] px-1.5 py-0.5 rounded border select-none transition-colors ${isKillActive ? 'bg-orange-500 text-white border-orange-600 font-bold' : 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-200'}`}>
+                                        KILL
                                     </div>
                                 )}
-                                <button onClick={(e) => removeOperation(e, op.id)}
-                                        className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center shrink-0 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors text-lg leading-none">
-                                    ×
-                                </button>
+
+                                {/* 点击 Badge 触发展开 */}
+                                <div onClick={(e) => toggleExpand(e, op.id)}>
+                                    <span
+                                        className={`inline-block text-[10px] sm:text-xs px-1.5 py-0.5 rounded font-bold truncate max-w-[4rem] sm:max-w-none hover:opacity-80 border border-transparent 
+                                        ${isRedTarget ? 'bg-red-100 text-red-700' : isGreenTarget ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}
+                                        ${isExpanded ? 'ring-2 ring-indigo-400' : ''}
+                                    `}>
+                                        {getPosLabel(agentNames, op.position)}
+                                    </span>
+                                </div>
+
+                                {/* 点击 Badge 触发展开 */}
+                                <div onClick={(e) => toggleExpand(e, op.id)}>
+                                    <span
+                                        className={`inline-block text-xs sm:text-sm font-mono font-bold text-gray-800 px-2 py-0.5 rounded hover:bg-gray-100 border border-transparent hover:border-gray-200 transition-colors ${isExpanded ? 'bg-gray-100 border-indigo-400' : ''}`}>
+                                        {op.type}
+                                    </span>
+                                </div>
+
+                                <div className="ml-auto flex items-center gap-2 sm:gap-3">
+                                    {simulationSteps && simulationSteps[index] !== undefined && (
+                                        <div
+                                            className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 min-w-[2.5rem] justify-center font-mono font-bold">
+                                            <span className="opacity-50 font-normal">→</span>
+                                            {simulationSteps[index]}
+                                        </div>
+                                    )}
+                                    <button onClick={(e) => removeOperation(e, op.id)}
+                                            className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center shrink-0 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors text-lg leading-none">
+                                        ×
+                                    </button>
+                                </div>
                             </div>
+
+                            {/* === 展开 Body (修改区域) === */}
+                            {isExpanded && (
+                                <div
+                                    // 阻止冒泡，确保点击Body内部不触发全局关闭，也不触发行的Swap逻辑
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="p-3 bg-gray-50 border-t border-gray-100 animate-fade-in cursor-default"
+                                >
+                                    <div className="flex flex-col gap-3">
+                                        {/* 1. 修改密探 */}
+                                        <div className="flex flex-col gap-2">
+                                            <div
+                                                className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                                                1. 修改密探
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {(['red', 'green'] as const).map(p => (
+                                                    <button
+                                                        key={p}
+                                                        onClick={() => updateOperation(op.id, { position: p })}
+                                                        className={`flex-1 px-3 py-2 text-xs font-bold rounded-lg border transition-all whitespace-nowrap
+                                                            ${op.position === p
+                                                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-white hover:border-indigo-300'}
+                                                        `}
+                                                    >
+                                                        {getPosLabel(agentNames, p)}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <div className="grid grid-cols-5 gap-2">
+                                                {[1, 2, 3, 4, 5].map(p => (
+                                                    <button
+                                                        key={p}
+                                                        onClick={() => updateOperation(op.id, { position: p })}
+                                                        className={`aspect-square flex items-center justify-center text-xs font-bold rounded-lg border transition-all
+                                                            ${op.position === p
+                                                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-white hover:border-indigo-300'}
+                                                        `}
+                                                    >
+                                                        {p}{agentNames[p - 1] === '' ? '' : `: ${agentNames[p - 1]}`}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="border-t border-gray-200/50"></div>
+
+                                        {/* 2. 修改操作 */}
+                                        <div className="flex flex-col gap-2">
+                                            <div
+                                                className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                                                2. 修改操作
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {(['A', '↑', '↓', '圈'] as const).map(t => (
+                                                    <button
+                                                        key={t}
+                                                        onClick={() => updateOperation(op.id, { type: t })}
+                                                        className={`flex-1 py-2 text-sm font-bold rounded-lg border transition-all
+                                                            ${op.type === t
+                                                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-white hover:border-indigo-300'}
+                                                        `}
+                                                    >
+                                                        {t}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )
                 })}
@@ -1294,12 +1249,17 @@ function TransitionPanel({
                 </div>
 
                 {/* 2. 显眼描述 (Target) */}
-                {targetVal !== null && (
-                    <div className="text-center bg-indigo-50 border border-indigo-100 rounded-lg p-3 animate-fade-in">
-                        <span className="text-gray-600 text-sm">本回合结束，我方应有 </span>
-                        <span className="text-2xl font-bold text-indigo-700 mx-1">{targetVal}</span>
-                        <span className="text-gray-600 text-sm">层绿人</span>
-                    </div>
+                {targetVal !== null && (<>
+                        <div className="text-xs text-gray-500 mb-2">
+                            ⚠️ 无法做到时，可提前或推迟进阶段二。
+                        </div>
+                        <div
+                            className="text-center bg-indigo-50 border border-indigo-100 rounded-lg p-3 animate-fade-in">
+                            <span className="text-gray-600 text-sm">本回合结束，我方应有 </span>
+                            <span className="text-2xl font-bold text-indigo-700 mx-1">{targetVal}</span>
+                            <span className="text-gray-600 text-sm">层绿人</span>
+                        </div>
+                    </>
                 )}
 
                 {/* 3. 沙盘推演区 (带折叠 & 自动Kill逻辑) */}
@@ -1394,86 +1354,129 @@ function SummaryTable({ rounds, roundInputs, startRoundNum, agentNames, redPos, 
     greenPos: number,
 }) {
     return (
-        <div className="mb-6 overflow-x-auto border border-gray-200 rounded-lg shadow-sm">
-            <table className="min-w-full divide-y divide-gray-200 text-xs">
-                <thead className="bg-gray-800 text-white">
-                <tr>
-                    <th className="px-3 py-2 text-center w-12 text-sm font-bold">#</th>
-                    {POSITIONS.map(p => {
-                        // === 修改点: 表头染色 ===
-                        const isRed = p === Number(redPos);
-                        const isGreen = p === Number(greenPos);
+        <div className="mb-6">
+            <div className="overflow-x-auto border border-gray-200 rounded-lg shadow-sm">
+                <table className="min-w-full divide-y divide-gray-200 text-xs">
+                    <thead className="bg-gray-800 text-white">
+                    <tr>
+                        <th className="px-3 py-2 text-center w-12 text-sm font-bold">#</th>
+                        {POSITIONS.map(p => {
+                            const isRed = p === Number(redPos);
+                            const isGreen = p === Number(greenPos);
+                            return (
+                                <th key={p} className={`px-3 py-2 text-center min-w-[70px] ${
+                                    isRed ? 'bg-red-700' : isGreen ? 'bg-green-700' : ''
+                                }`}>
+                                    {p}号位 <span
+                                    className="opacity-75 font-normal block scale-90">{agentNames[p - 1] || '-'}</span>
+                                </th>
+                            );
+                        })}
+                        <th className="px-3 py-2 text-left min-w-[100px]">策略</th>
+                        <th className="px-3 py-2 text-left min-w-[100px]">绿人</th>
+                    </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 bg-white">
+                    {rounds.map((round, rIdx) => {
+                        // === 新增：计算状态 ===
+                        const roundInput = roundInputs[rIdx];
+                        const input = roundInputs[rIdx];
+                        let isMismatch = false;
+                        const isStrategyMissing = round.selectedStrategyIdx === null; // 判断是否未选策略
+
+                        // 只有当数据完整且选择了策略时才进行校验
+                        if (input && input.green !== null && input.mobFull !== null && !isStrategyMissing) {
+                            const startState = new State(input.green, !input.mobFull);
+                            const targetState = getNextState(startState, round.selectedStrategyIdx!);
+                            const steps = simulateOperations(input.green, input.mobFull, round.operations, Number(redPos), Number(greenPos));
+                            const actual = steps.length > 0 ? steps[steps.length - 1] : input.green;
+                            if (targetState.count !== actual) {
+                                isMismatch = true;
+                            }
+                        }
+
+                        const thresholds = roundInput.thresholds ?? 3;
+                        let strategy = '未选择';
+                        if (round.selectedStrategyIdx === 0) {
+                            if (thresholds > 0) {
+                                strategy = `不要打下${getHPLowerBound(thresholds)}`;
+                            } else {
+                                strategy = '';
+                            }
+                        }
+                        if (round.selectedStrategyIdx !== null && round.selectedStrategyIdx > 0) {
+                            const targetThreshold = Math.max(0, thresholds - round.selectedStrategyIdx);
+                            strategy = `打下${getHPUpperBound(targetThreshold)}`;
+                        }
+
+                        const grouped = groupOpsByPos(round.operations, redPos, greenPos);
+
+                        // === 修改：计算行背景色 ===
+                        let rowClass = '';
+                        if (isStrategyMissing) {
+                            rowClass = 'bg-orange-50 ring-1 ring-inset ring-orange-200'; // 未选策略：橙色
+                        } else if (isMismatch) {
+                            rowClass = 'bg-red-100 ring-1 ring-inset ring-red-300'; // 结果不符：红色
+                        } else {
+                            rowClass = rIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50'; // 默认斑马纹
+                        }
+
                         return (
-                            <th key={p} className={`px-3 py-2 text-center min-w-[70px] ${
-                                isRed ? 'bg-red-700' : isGreen ? 'bg-green-700' : ''
-                            }`}>
-                                {p}号位 <span
-                                className="opacity-75 font-normal block scale-90">{agentNames[p - 1] || '-'}</span>
-                            </th>
+                            <tr key={round.id} className={rowClass}>
+                                <td className="px-3 py-3 text-center font-bold text-gray-500 text-sm">{startRoundNum + rIdx}</td>
+                                {POSITIONS.map(pos => {
+                                    const isRed = pos === Number(redPos);
+                                    const isGreen = pos === Number(greenPos);
+                                    const items = grouped[pos];
+
+                                    return (
+                                        <td key={pos} className={`px-2 py-2 text-center align-top ${
+                                            isRed ? 'bg-red-50/30' : isGreen ? 'bg-green-50/30' : ''
+                                        }`}>
+                                            <div className="flex flex-col gap-1 items-center">
+                                                {items.map((item, idx) => (
+                                                    <span key={idx} className={`
+                                                        inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-bold shadow-sm whitespace-nowrap border
+                                                        ${item.isGeneric
+                                                        ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                                                        : 'border-gray-200 bg-white text-gray-700'}
+                                                    `}>
+                                                        {item.order}{item.type}{item.killMob &&
+                                                        <span className="text-red-500">*</span>}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </td>
+                                    );
+                                })}
+                                <td className={`px-3 py-3 text-sm ${isStrategyMissing ? 'text-orange-700 font-bold' : 'text-gray-600'}`}>
+                                    {strategy}
+                                    {isMismatch && <span className="ml-2 text-red-600 font-bold"
+                                                         title="操作结果与目标不符">⚠️</span>}
+                                </td>
+                                <td className={`px-3 py-3 text-sm ${isMismatch ? 'text-red-700 font-bold' : 'text-gray-600'}`}>
+                                    {roundInput.green}
+                                </td>
+                            </tr>
                         );
                     })}
-                    <th className="px-3 py-2 text-left min-w-[100px]">策略</th>
-                    <th className="px-3 py-2 text-left min-w-[100px]">绿人</th>
-                </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 bg-white">
-                {rounds.map((round, rIdx) => {
-                    const roundInput = roundInputs[rIdx];
-                    const thresholds = roundInput.thresholds ?? 3;
-                    let strategy = '';
-
-                    if (thresholds > 0) {
-                        strategy = `不要打下${getHPLowerBound(thresholds)}`;
-                    }
-                    if (round.selectedStrategyIdx !== null && round.selectedStrategyIdx > 0) {
-                        const targetThreshold = Math.max(0, thresholds - round.selectedStrategyIdx);
-                        strategy = `打下${getHPUpperBound(targetThreshold)}`;
-                    }
-
-                    const grouped = groupOpsByPos(round.operations, redPos, greenPos);
-
-                    return (
-                        <tr key={round.id} className={rIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                            <td className="px-3 py-3 text-center font-bold text-gray-500 text-sm">{startRoundNum + rIdx}</td>
-                            {POSITIONS.map(pos => {
-                                // === 修改点: 列背景染色 & 渲染解析后的 Item ===
-                                const isRed = pos === Number(redPos);
-                                const isGreen = pos === Number(greenPos);
-                                const items = grouped[pos]; // 获取解析后的列表
-
-                                return (
-                                    <td key={pos} className={`px-2 py-2 text-center align-top ${
-                                        isRed ? 'bg-red-50/30' : isGreen ? 'bg-green-50/30' : ''
-                                    }`}>
-                                        <div className="flex flex-col gap-1 items-center">
-                                            {items.map((item, idx) => (
-                                                <span key={idx} className={`
-                                                    inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-bold shadow-sm whitespace-nowrap border
-                                                    ${item.isGeneric
-                                                    ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                                                    : 'border-gray-200 bg-white text-gray-700'}
-                                                `}>
-                                                    {/* 格式: 2A, 3↑ */}
-                                                    {item.order}{item.type}{item.killMob &&
-                                                    <span className="text-red-500">*</span>}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </td>
-                                );
-                            })}
-                            <td className="px-3 py-3 text-gray-600 text-sm">{strategy}</td>
-                            <td className="px-3 py-3 text-gray-600 text-sm">
-                                {roundInput.green}
-                            </td>
-                        </tr>
-                    );
-                })}
-                {rounds.length === 0 && <tr>
-                    <td colSpan={7} className="p-4 text-center text-gray-400">暂无回合数据</td>
-                </tr>}
-                </tbody>
-            </table>
+                    {rounds.length === 0 && <tr>
+                        <td colSpan={7} className="p-4 text-center text-gray-400">暂无回合数据</td>
+                    </tr>}
+                    </tbody>
+                </table>
+            </div>
+            {/* === 新增：脚注说明 === */}
+            <div className="mt-2 text-[10px] sm:text-xs text-gray-500 flex justify-end gap-4">
+                <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 bg-orange-50 border border-orange-200 rounded block"></span>
+                    <span>未选策略</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 bg-red-100 border border-red-300 rounded block"></span>
+                    <span>操作无法做到要求绿人数</span>
+                </div>
+            </div>
         </div>
     );
 }
