@@ -998,9 +998,16 @@ function RoundPanel({
             const label = getStrategyLabel(thresholds, strategyIdx);
             const subLabel = "";
 
-            return { index: strategyIdx, label, subLabel, deltas, nextCount: nextSt.count, disabled: false };
+            return {
+                index: strategyIdx,
+                label,
+                subLabel,
+                deltas,
+                nextCount: nextSt.count,
+                disabled: roundIndex % 5 == 0 && nextSt.count > 10
+            };
         });
-    }, [green, mobFull, thresholds, canCalculate]);
+    }, [green, mobFull, thresholds, canCalculate, roundIndex]);
 
     const simulationSteps = useMemo(() => {
         if (!canCalculate || globalConfig.redPos === 0 || globalConfig.greenPos === 0) return [];
