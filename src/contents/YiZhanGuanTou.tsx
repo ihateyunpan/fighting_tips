@@ -306,14 +306,14 @@ export default function YiZhanGuanTou() {
                 {/* 策略表格 */}
                 <div className="mb-8">
                     <h4 className="text-sm font-bold text-gray-700 mb-2">A. 目标选择</h4>
-                    <div className="overflow-hidden border border-gray-200 rounded-lg">
+                    <div className="overflow-x-auto border border-gray-200 rounded-lg">
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-100">
                             <tr>
-                                <th className="px-4 py-2 text-left text-xs text-gray-500">策略</th>
-                                <th className="px-4 py-2 text-center text-xs text-gray-500">增幅</th>
-                                <th className="px-4 py-2 text-center text-xs text-gray-500">我方绿人数目标 (X)</th>
-                                <th className="px-4 py-2 text-center text-xs text-gray-500">选择</th>
+                                <th className="px-4 py-2 text-left text-xs text-gray-500 whitespace-nowrap">策略</th>
+                                <th className="px-4 py-2 text-center text-xs text-gray-500 whitespace-nowrap">增幅</th>
+                                <th className="px-4 py-2 text-center text-xs text-gray-500 whitespace-nowrap">我方绿人数目标 (X)</th>
+                                <th className="px-4 py-2 text-center text-xs text-gray-500 whitespace-nowrap">选择</th>
                             </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
