@@ -139,6 +139,22 @@ function calculateStep2Simulation(
     };
 }
 
+function getStrategyLabel(currentThreshold: number, breakCount?: number | null) {
+    if (breakCount != null) {
+        if (breakCount === 0) {
+            if (currentThreshold > 0) {
+                return `不打下${getHPLowerBound(currentThreshold)}`;
+            }
+            return '';
+        }
+        const targetThreshold = Math.max(0, currentThreshold - breakCount);
+
+        return `打下${getHPUpperBound(targetThreshold)}`;
+    }
+
+    return '未选择';
+}
+
 // ==========================================
 // 2. 类型定义
 // ==========================================
@@ -975,21 +991,14 @@ function RoundPanel({
         if (!canCalculate) return [];
         const startState = new State(green!, !mobFull);
 
-        return [0, 1, 2, 3].map((strategyIdx) => {
+        return [0, 1, 2, 3].filter(x => x <= thresholds!).map((strategyIdx) => {
             const nextSt = getNextState(startState, strategyIdx);
             const deltas = getDeltas(startState, nextSt);
 
-            let label = "";
+            const label = getStrategyLabel(thresholds, strategyIdx);
             const subLabel = "";
-            if (strategyIdx === 0) {
-                // 根据剩余 threshold 数量显示文字，略过...
-                label = "不打下";
-            } else {
-                label = `打下${strategyIdx}个阈值`;
-            }
 
-            const disabled = strategyIdx > thresholds!;
-            return { index: strategyIdx, label, subLabel, deltas, nextCount: nextSt.count, disabled };
+            return { index: strategyIdx, label, subLabel, deltas, nextCount: nextSt.count, disabled: false };
         });
     }, [green, mobFull, thresholds, canCalculate]);
 
@@ -1382,7 +1391,6 @@ function SummaryTable({ rounds, roundInputs, startRoundNum, agentNames, redPos, 
                     <tbody className="divide-y divide-gray-200 bg-white">
                     {rounds.map((round, rIdx) => {
                         // === 新增：计算状态 ===
-                        const roundInput = roundInputs[rIdx];
                         const input = roundInputs[rIdx];
                         let isMismatch = false;
                         const isStrategyMissing = round.selectedStrategyIdx === null; // 判断是否未选策略
@@ -1396,20 +1404,6 @@ function SummaryTable({ rounds, roundInputs, startRoundNum, agentNames, redPos, 
                             if (targetState.count !== actual) {
                                 isMismatch = true;
                             }
-                        }
-
-                        const thresholds = roundInput.thresholds ?? 3;
-                        let strategy = '未选择';
-                        if (round.selectedStrategyIdx === 0) {
-                            if (thresholds > 0) {
-                                strategy = `不要打下${getHPLowerBound(thresholds)}`;
-                            } else {
-                                strategy = '';
-                            }
-                        }
-                        if (round.selectedStrategyIdx !== null && round.selectedStrategyIdx > 0) {
-                            const targetThreshold = Math.max(0, thresholds - round.selectedStrategyIdx);
-                            strategy = `打下${getHPUpperBound(targetThreshold)}`;
                         }
 
                         const grouped = groupOpsByPos(round.operations, redPos, greenPos);
@@ -1453,12 +1447,12 @@ function SummaryTable({ rounds, roundInputs, startRoundNum, agentNames, redPos, 
                                     );
                                 })}
                                 <td className={`px-3 py-3 text-sm ${isStrategyMissing ? 'text-orange-700 font-bold' : 'text-gray-600'}`}>
-                                    {strategy}
+                                    {getStrategyLabel(input.thresholds ?? 3, round.selectedStrategyIdx)}
                                     {isMismatch && <span className="ml-2 text-red-600 font-bold"
                                                          title="操作结果与目标不符">⚠️</span>}
                                 </td>
                                 <td className={`px-3 py-3 text-sm ${isMismatch ? 'text-red-700 font-bold' : 'text-gray-600'}`}>
-                                    {roundInput.green}
+                                    {input.green}
                                 </td>
                             </tr>
                         );
