@@ -2,7 +2,9 @@
 import { Suspense } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { levels } from '../data/levels';
-import { LevelContent } from '../contents/registry'; // <--- 引入新的组件
+import { LevelContent, LevelToolBar } from '../contents/registry'; // <--- 引入 Provider 和 ToolBar
+import { getEventMeta } from "../data/events.ts";
+import { LevelProvider } from '../components/LevelProvider';
 
 export default function LevelDetail() {
     const { id } = useParams<{ id: string }>();
@@ -18,40 +20,48 @@ export default function LevelDetail() {
     }
 
     return (
-        <div className="max-w-4xl mx-auto animate-fade-in">
-            <nav className="flex items-center text-sm text-gray-500 mb-6 space-x-2">
-                <Link to="/" className="hover:text-indigo-600 transition-colors">首页</Link>
-                <span className="text-gray-300">/</span>
-                <span className="text-gray-700 font-medium">{levelData.eventName}</span>
-                <span className="text-gray-300">/</span>
-                <span className="text-gray-900 font-medium truncate">{levelData.name}</span>
-            </nav>
+        // 1. 包裹 LevelProvider
+        <LevelProvider>
+            <div className="max-w-4xl mx-auto animate-fade-in">
+                <nav className="flex items-center text-sm text-gray-500 mb-6 space-x-2">
+                    <Link to="/" className="hover:text-indigo-600 transition-colors">首页</Link>
+                    <span className="text-gray-300">/</span>
+                    <span className="text-gray-700 font-medium">{getEventMeta(levelData.event).name}</span>
+                    <span className="text-gray-300">/</span>
+                    <span className="text-gray-900 font-medium truncate">{levelData.name}</span>
+                </nav>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="px-8 py-8 border-b border-gray-100">
-                    <div className="flex items-baseline gap-4 mb-2">
-                         <span className="px-2.5 py-0.5 rounded text-sm font-semibold bg-indigo-100 text-indigo-700">
-                            {levelData.level || 'SP'}
-                         </span>
-                        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">{levelData.name}</h1>
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="px-8 py-8 border-b border-gray-100">
+                        <div className="flex items-center justify-between gap-4 mb-2"> {/* 修改: justify-between */}
+                            <div className="flex items-baseline gap-4">
+                                 <span
+                                     className="px-2.5 py-0.5 rounded text-sm font-semibold bg-indigo-100 text-indigo-700">
+                                    {levelData.level || 'SP'}
+                                 </span>
+                                <h1 className="text-3xl font-bold text-gray-900 tracking-tight">{levelData.name}</h1>
+                            </div>
+
+                            {/* 2. 插入 Toolbar (自动根据 Context 渲染) */}
+                            <LevelToolBar/>
+                        </div>
+                    </div>
+
+                    <div className="px-8 py-8">
+                        <Suspense fallback={
+                            <div className="animate-pulse space-y-4">
+                                <div className="h-4 bg-gray-100 rounded w-3/4"></div>
+                                <div className="h-4 bg-gray-100 rounded w-1/2"></div>
+                                <div className="h-32 bg-gray-50 rounded-lg mt-6"></div>
+                            </div>
+                        }>
+                            <div className="prose prose-indigo max-w-none">
+                                <LevelContent id={id || ''}/>
+                            </div>
+                        </Suspense>
                     </div>
                 </div>
-
-                <div className="px-8 py-8">
-                    <Suspense fallback={
-                        <div className="animate-pulse space-y-4">
-                            <div className="h-4 bg-gray-100 rounded w-3/4"></div>
-                            <div className="h-4 bg-gray-100 rounded w-1/2"></div>
-                            <div className="h-32 bg-gray-50 rounded-lg mt-6"></div>
-                        </div>
-                    }>
-                        <div className="prose prose-indigo max-w-none">
-                            {/* === 修改点: 直接渲染组件，传入 id === */}
-                            <LevelContent id={id || ''}/>
-                        </div>
-                    </Suspense>
-                </div>
             </div>
-        </div>
+        </LevelProvider>
     );
 }

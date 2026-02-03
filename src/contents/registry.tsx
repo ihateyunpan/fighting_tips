@@ -1,5 +1,6 @@
 /* src/contents/registry.tsx */
-import { type ComponentType, lazy, type LazyExoticComponent } from 'react';
+import { type ComponentType, lazy, type LazyExoticComponent, useRef } from 'react';
+import { useLevelContext } from "../components/LevelContext";
 
 // 动态引入组件
 const YiZhanGuanTou = lazy(() => import('./YiZhanGuanTou'));
@@ -19,8 +20,67 @@ const contentMap: Record<string, LazyComponent> = {
     '1': YiZhanGuanTou,
 };
 
-// === 修改点: 将普通函数 getLevelComponent 改为 React 组件 LevelContent ===
-// 这样文件就只导出组件了，符合 Fast Refresh 规则
+// ==========================================
+export function LevelToolBar() {
+    const { actions } = useLevelContext();
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const hasExport = !!actions.onExport;
+    const hasImport = !!actions.onImport;
+
+    if (!hasExport && !hasImport) return null;
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !actions.onImport) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const content = event.target?.result as string;
+            actions.onImport?.(content);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        };
+        reader.readAsText(file);
+    };
+
+    return (
+        <div className="flex gap-2">
+            {hasExport && (
+                <button
+                    onClick={actions.onExport}
+                    className="px-3 py-1.5 bg-white border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-50 shadow-sm transition-colors flex items-center gap-1"
+                    title="导出数据" // 鼠标悬停或长按显示提示
+                >
+                    <span>📤</span>
+                    <span className="hidden sm:inline">导出数据</span>
+                </button>
+            )}
+            {hasImport && (
+                <>
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="px-3 py-1.5 bg-white border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-50 shadow-sm transition-colors flex items-center gap-1"
+                        title="导入数据"
+                    >
+                        <span>📥</span>
+                        <span className="hidden sm:inline">导入数据</span>
+                    </button>
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileChange}
+                        accept=".json"
+                        className="hidden"
+                    />
+                </>
+            )}
+        </div>
+    );
+}
+
+// ==========================================
+// 修改: LevelContent
+// ==========================================
 export function LevelContent({ id }: { id: string }) {
     const Component = contentMap[id] || NotFound;
     return <Component/>;
