@@ -83,6 +83,10 @@ function simulateOperations(
             if (op.type === 'A') simState.add(-1); else if (op.type === '↑') simState.add(-2);
         }
 
+        if (op.killMob) {
+            simState.add(10);
+        }
+
         if (currentPos === redPos) mode = 'FORWARD';
         else if (currentPos === greenPos) mode = 'BACKWARD';
 
