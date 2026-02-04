@@ -1144,6 +1144,15 @@ function RoundPanel({
                                 </tbody>
                             </table>
                         </div>
+                        {roundData.selectedStrategyIdx !== null && (
+                            <div
+                                className="text-center bg-indigo-50 border border-indigo-100 rounded-lg p-3 animate-fade-in mt-4">
+                                <span className="text-gray-600 text-sm">本回合结束，我方应有 </span>
+                                <span
+                                    className="text-2xl font-bold text-indigo-700 mx-1">{tableData[roundData.selectedStrategyIdx].nextCount}</span>
+                                <span className="text-gray-600 text-sm">层绿人</span>
+                            </div>
+                        )}
                     </div>
 
                     {/* 沙盘排轴 */}
