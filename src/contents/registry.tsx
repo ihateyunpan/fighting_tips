@@ -4,6 +4,7 @@ import { useLevelContext } from "../components/LevelContext";
 
 // 动态引入组件
 const YiZhanGuanTou = lazy(() => import('./YiZhanGuanTou'));
+const Relic19_4 = lazy(() => import('./Relic19_4'))
 
 // 404 组件
 const NotFound = () => (
@@ -18,6 +19,7 @@ type LazyComponent = LazyExoticComponent<ComponentType<any>> | ComponentType<any
 // 路由映射表
 const contentMap: Record<string, LazyComponent> = {
     '1': YiZhanGuanTou,
+    '2': Relic19_4,
 };
 
 // ==========================================

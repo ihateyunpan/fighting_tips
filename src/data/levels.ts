@@ -9,4 +9,5 @@ export interface Level {
 
 export const levels: Level[] = [
     { id: '1', name: '驿站惯偷', event: 'HUI_XIANG_LU', level: '第5层' },
+    { id: '2', name: '法正', event: 'DUNGEON_19', level: '遗迹4' },
 ];
