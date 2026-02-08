@@ -19,6 +19,7 @@ type ElementType = '地' | '水' | '火' | '风' | '阴' | '阳' | '混沌';
 type ActionType = 'A' | '↑' | '↓' | '圈';
 type ConstraintType = 'NONE' | 'FIXED' | 'RELATIVE' | 'IMMEDIATE';
 type RelativeType = 'BEFORE' | 'AFTER';
+type FixedOperator = 'AT' | 'BEFORE' | 'AFTER';
 
 interface RelativeRule {
     id: string;
@@ -32,6 +33,7 @@ interface ActionItem {
     slotIndex: number;
     constraint: ConstraintType;
     fixedIndex?: number;
+    fixedOperator?: FixedOperator;
     relativeRules: RelativeRule[];
     immediateTargetId?: string;
 }
@@ -233,11 +235,17 @@ const solveRound = (actions: ActionItem[], slots: Slot[]) => {
             const isCircle = action.types.includes('圈');
             const nextEffectiveIndex = effectiveCountSoFar + (isCircle ? 0 : 1);
 
-            // [剪枝] 固定位置检查
-            // 如果是圈，它没有序号，无法满足 FIXED 约束 (或者说不能被固定在第X个有效位置)
-            // 如果不是圈，它的序号必须等于 fixedIndex
+            // [修改] 固定位置检查：支持 =, <, > 逻辑
             if (action.constraint === 'FIXED') {
-                if (isCircle || action.fixedIndex !== nextEffectiveIndex) continue;
+                // 圈不能被固定位置约束（因为它不占序列号）
+                if (isCircle) continue;
+
+                const targetIndex = action.fixedIndex || 1;
+                const op = action.fixedOperator || 'AT';
+
+                if (op === 'AT' && nextEffectiveIndex !== targetIndex) continue;
+                if (op === 'BEFORE' && !(nextEffectiveIndex < targetIndex)) continue;
+                if (op === 'AFTER' && !(nextEffectiveIndex > targetIndex)) continue;
             }
 
             // [剪枝] 紧跟检查 (检查物理顺序 path 的最后一个)
@@ -507,9 +515,16 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
                                                     {action.constraint === 'NONE' && <span
                                                         className="text-xs font-bold text-slate-600">{getActionLabel(action.types)}</span>}
                                                     {action.constraint === 'FIXED' &&
-                                                        <div className="flex items-baseline gap-0.5"><span
-                                                            className="text-lg font-black text-amber-500 leading-none">{action.fixedIndex}</span><span
-                                                            className="text-xs font-bold text-slate-700">{getActionLabel(action.types)}</span>
+                                                        <div className="flex items-baseline gap-0.5">
+                                                            {/* [修改] 根据操作符显示前缀 */}
+                                                            <span
+                                                                className="text-lg font-black text-amber-500 leading-none">
+                                                                {action.fixedOperator === 'BEFORE' ? '<' :
+                                                                    action.fixedOperator === 'AFTER' ? '>' : ''}
+                                                                {action.fixedIndex}
+                                                            </span>
+                                                            <span
+                                                                className="text-xs font-bold text-slate-700">{getActionLabel(action.types)}</span>
                                                         </div>}
                                                     {/* [新增] 紧跟展示 */}
                                                     {action.constraint === 'IMMEDIATE' && (
@@ -655,27 +670,55 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
                                                 <button key={opt.v} onClick={() => updateActionItem(action.id, {
                                                     constraint: opt.v as ConstraintType,
                                                     fixedIndex: 1,
+                                                    fixedOperator: 'AT',
                                                     relativeRules: [],
                                                     immediateTargetId: '',
                                                 })}
                                                         className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${action.constraint === opt.v ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{opt.l}</button>))}</div>
                                         </div>
-                                        {action.constraint === 'FIXED' && <div
-                                            className="flex items-center justify-center gap-3 py-2 bg-amber-50 rounded-lg border border-amber-100">
-                                            <span className="text-sm text-amber-800 font-medium">第</span>
-                                            <div className="flex items-center bg-white rounded border border-amber-200">
-                                                <button
-                                                    onClick={() => updateActionItem(action.id, { fixedIndex: Math.max(1, (action.fixedIndex || 1) - 1) })}
-                                                    className="px-2 py-1 text-amber-600 hover:bg-amber-50">-
-                                                </button>
-                                                <span
-                                                    className="w-8 text-center font-bold text-amber-700">{action.fixedIndex}</span>
-                                                <button
-                                                    onClick={() => updateActionItem(action.id, { fixedIndex: Math.min(5, (action.fixedIndex || 1) + 1) })}
-                                                    className="px-2 py-1 text-amber-600 hover:bg-amber-50">+
-                                                </button>
+                                        {action.constraint === 'FIXED' && (
+                                            <div
+                                                className="flex flex-col gap-2 py-2 bg-amber-50 rounded-lg border border-amber-100 p-3">
+                                                {/* [新增] 操作符选择器 */}
+                                                <div className="flex rounded bg-white border border-amber-200 p-0.5">
+                                                    {[
+                                                        { v: 'BEFORE', l: '第X个前 (<)' },
+                                                        { v: 'AT', l: '第X个 (=)' },
+                                                        { v: 'AFTER', l: '第X个后 (>)' }
+                                                    ].map(opt => (
+                                                        <button
+                                                            key={opt.v}
+                                                            onClick={() => updateActionItem(action.id, { fixedOperator: opt.v as FixedOperator })}
+                                                            className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${
+                                                                (action.fixedOperator || 'AT') === opt.v
+                                                                    ? 'bg-amber-100 text-amber-700'
+                                                                    : 'text-slate-400 hover:bg-slate-50'
+                                                            }`}
+                                                        >
+                                                            {opt.l}
+                                                        </button>
+                                                    ))}
+                                                </div>
+
+                                                {/* 数字选择器 (保持原有逻辑，微调样式) */}
+                                                <div className="flex items-center justify-center gap-3">
+                                                    <span className="text-sm text-amber-800 font-medium">X = </span>
+                                                    <div
+                                                        className="flex items-center bg-white rounded border border-amber-200">
+                                                        <button
+                                                            onClick={() => updateActionItem(action.id, { fixedIndex: Math.max(1, (action.fixedIndex || 1) - 1) })}
+                                                            className="px-3 py-1 text-amber-600 hover:bg-amber-50 font-bold border-r border-amber-100">-
+                                                        </button>
+                                                        <span
+                                                            className="w-10 text-center font-bold text-amber-700">{action.fixedIndex || 1}</span>
+                                                        <button
+                                                            onClick={() => updateActionItem(action.id, { fixedIndex: Math.min(20, (action.fixedIndex || 1) + 1) })}
+                                                            className="px-3 py-1 text-amber-600 hover:bg-amber-50 font-bold border-l border-amber-100">+
+                                                        </button>
+                                                    </div>
+                                                </div>
                                             </div>
-                                            <span className="text-sm text-amber-800 font-medium">个行动</span></div>}
+                                        )}
                                         {/* [新增] 紧跟配置界面 */}
                                         {action.constraint === 'IMMEDIATE' && (
                                             <div
