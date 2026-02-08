@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useRef } from 'react';
 
 export interface LevelActions {
-    onExport?: () => void;
+    onExport?: () => { data: string; filename: string };
     onImport?: (jsonContent: string) => void;
 }
 
@@ -34,8 +34,9 @@ export function useLevelToolbar(actions: LevelActions) {
         if (!registerActions) return;
 
         const stableActions: LevelActions = {
+            // 这里要做一下封装，确保引用稳定
             onExport: actions.onExport
-                ? () => actionsRef.current.onExport?.()
+                ? () => actionsRef.current.onExport!()
                 : undefined,
 
             onImport: actions.onImport

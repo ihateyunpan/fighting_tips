@@ -1069,24 +1069,31 @@ export default function AlchemySolver() {
     };
 
     const handleExport = () => {
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(new Blob([JSON.stringify({
+        const data = {
             slots,
             rounds,
             version: 'v6'
-        }, null, 2)], { type: 'application/json' }));
-        link.download = `relic19-v5.json`;
-        link.click();
+        };
+        // === 修改点：只返回数据和文件名 ===
+        return {
+            data: JSON.stringify(data, null, 2),
+            filename: `relic19_4-v6.json`
+        };
     };
     const handleImport = (json: string) => {
         try {
             const d = JSON.parse(json);
             if (d.slots && d.rounds) {
-                pushHistory(rounds);
-                setSlots(d.slots);
-                setRounds(d.rounds);
+                if (window.confirm("确定覆盖当前数据吗？")) {
+                    pushHistory(rounds);
+                    setSlots(d.slots);
+                    setRounds(d.rounds);
+                }
+            } else {
+                alert("数据格式错误");
             }
         } catch {
+            alert("解析失败");
         }
     };
     useLevelToolbar({ onExport: handleExport, onImport: handleImport });

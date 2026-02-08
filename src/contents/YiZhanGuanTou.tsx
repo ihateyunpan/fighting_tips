@@ -1530,14 +1530,11 @@ export default function YiZhanGuanTou() {
             version: 'v6',
             timestamp: new Date().toISOString()
         };
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `yizhan-backup-${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        // === 修改点：只返回数据和文件名 ===
+        return {
+            data: JSON.stringify(data, null, 2),
+            filename: `yizhan-backup-${new Date().toISOString().slice(0, 10)}.json`
+        };
     };
 
     // 定义导入逻辑 (接收 JSON 字符串)
@@ -1555,7 +1552,7 @@ export default function YiZhanGuanTou() {
                 alert("文件格式不正确，缺少关键数据。");
             }
         } catch (err) {
-            alert("无法解析 JSON 文件。");
+            alert("无法解析数据，请确保内容是有效的 JSON 格式。");
         }
     };
 
