@@ -96,11 +96,15 @@ const getDisplayId = (targetId: string, currentActions: ActionItem[]) => {
 const getActionLabel = (types: ActionType[]) => {
     if (types.includes('圈')) return '圈';
     // 检查是否包含 A, ↑, ↓ (即默认的“任意”)
+    const resorted: string[] = [];
     const hasA = types.includes('A');
     const hasUp = types.includes('↑');
     const hasDown = types.includes('↓');
     if (hasA && hasUp && hasDown) return '任意';
-    return types.join('/');
+    if (hasA) resorted.push('A');
+    if (hasUp) resorted.push('↑');
+    if (hasDown) resorted.push('↓');
+    return resorted.join('/');
 };
 const getSlotContent = (actions: ActionItem[] | null) => {
     const slotContents: string[] = Array(5).fill('');
