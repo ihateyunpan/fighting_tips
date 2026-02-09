@@ -1,17 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowRightLeft,
     Check,
     ChevronDown,
     ChevronRight,
     Copy,
-    Edit3,
     Plus,
     RotateCcw,
     Settings2,
     Trash2,
     X
 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLevelToolbar } from '../../components/LevelContext';
 
 // --- 类型定义 ---
@@ -20,6 +19,20 @@ type ActionType = 'A' | '↑' | '↓' | '圈';
 type ConstraintType = 'NONE' | 'FIXED' | 'RELATIVE' | 'IMMEDIATE';
 type RelativeType = 'BEFORE' | 'AFTER';
 type FixedOperator = 'AT' | 'BEFORE' | 'AFTER';
+type PreferenceType = 'FIXED' | 'RELATIVE' | 'EARLY' | 'LATE'; // [新增]
+type DecisionMode = 'BUY' | 'NOT_BUY';
+
+// [新增] 软偏好规则
+interface PreferenceRule {
+    id: string;
+    type: PreferenceType;
+    // Fixed 参数
+    fixedIndex?: number;
+    fixedOperator?: FixedOperator;
+    // Relative 参数
+    targetId?: string;
+    relativeType?: RelativeType;
+}
 
 interface RelativeRule {
     id: string;
@@ -29,13 +42,16 @@ interface RelativeRule {
 
 interface ActionItem {
     id: string;
-    types: ActionType[]; // [变更] 支持多选
+    types: ActionType[];
     slotIndex: number;
+    // --- 硬性约束 ---
     constraint: ConstraintType;
     fixedIndex?: number;
     fixedOperator?: FixedOperator;
-    relativeRules: RelativeRule[];
+    relativeRules: RelativeRule[]; // 这里复用了 RelativeRule 结构，但在硬约束里只用作 RELATIVE
     immediateTargetId?: string;
+    // --- [新增] 软性偏好 ---
+    preferences: PreferenceRule[];
 }
 
 interface Round {
@@ -43,6 +59,7 @@ interface Round {
     actions: ActionItem[];
     isCollapsed?: boolean;
     selectedItemName?: string; // 新增：该回合选择的物品
+    decisionMode?: DecisionMode; // 新增：该回合是购买还是不买
 }
 
 interface Slot {
@@ -211,22 +228,77 @@ const calculateGold = (sequence: ActionItem[], currentSlots: Slot[]) => {
     return total;
 };
 
-// [修改] 求解器：适配 types 和 约束逻辑
+// --- 核心算法更新 ---
+
+// [新增] 计算路径的偏好得分
+const calculatePreferenceScore = (path: ActionItem[]) => {
+    let score = 0;
+    const pathIds = path.map(a => a.id);
+
+    path.forEach((action, currentIndex) => {
+        // 计算 effectiveIndex (排除圈)
+        // 注意：软偏好里的 "第X个" 通常指有效操作的序数
+        const effectiveSequence = path.slice(0, currentIndex + 1).filter(a => !a.types.includes('圈'));
+        const currentEffectiveIndex = effectiveSequence.length; // 1-based
+
+        (action.preferences || []).forEach(pref => {
+            let met = false;
+            switch (pref.type) {
+                case 'EARLY':
+                    // 越靠前分越高 (简单线性)
+                    score += (10 - currentIndex);
+                    break;
+                case 'LATE':
+                    // 越靠后分越高
+                    score += currentIndex;
+                    break;
+                case 'FIXED': {
+                    const targetIdx = pref.fixedIndex || 1;
+                    const op = pref.fixedOperator || 'AT';
+                    if (action.types.includes('圈')) break; // 圈不参与 Fixed 计数
+                    if (op === 'AT' && currentEffectiveIndex === targetIdx) met = true;
+                    else if (op === 'BEFORE' && currentEffectiveIndex < targetIdx) met = true;
+                    else if (op === 'AFTER' && currentEffectiveIndex > targetIdx) met = true;
+                    break;
+                }
+                case 'RELATIVE': {
+                    if (!pref.targetId) break;
+                    const targetPos = pathIds.indexOf(pref.targetId);
+                    if (targetPos === -1) break; // 目标不在路径中(不太可能，除非是圈被过滤逻辑影响，暂时按物理路径算)
+                    if (pref.relativeType === 'BEFORE' && currentIndex < targetPos) met = true;
+                    if (pref.relativeType === 'AFTER' && currentIndex > targetPos) met = true;
+                    break;
+                }
+            }
+            if (met) score += 100; // 满足一个具体规则加 100 分
+        });
+    });
+    return score;
+};
+
+// [修改] 求解器：支持软偏好打分
 const solveRound = (actions: ActionItem[], slots: Slot[]) => {
     if (actions.length < 5) return { solutions: {}, error: "需5个操作" };
     const { dependencies } = buildDependencies(actions);
-    const validResults: Record<number, ActionItem[]> = {};
+
+    // 存储结构：Gold -> { score: number, path: ActionItem[] }
+    // 最后只返回 Record<number, ActionItem[]> 以兼容 UI
+    const bestResults: Record<number, { score: number, path: ActionItem[] }> = {};
+
     const totalSteps = actions.length;
 
     const dfs = (path: ActionItem[], used: Set<string>) => {
         if (path.length === totalSteps) {
             const gold = calculateGold(path, slots);
-            if (!validResults[gold]) validResults[gold] = [...path];
+            const score = calculatePreferenceScore(path);
+
+            // 如果当前金币还没有解，或者当前解的分数更高，则更新
+            if (!bestResults[gold] || score > bestResults[gold].score) {
+                bestResults[gold] = { score, path: [...path] };
+            }
             return;
         }
 
-        // 计算当前的“有效步骤数” (排除圈)
-        // path 中非圈的数量 + 1 即为当前若加入一个非圈操作后的有效序号
         const effectiveCountSoFar = path.filter(a => !a.types.includes('圈')).length;
 
         for (const action of actions) {
@@ -235,27 +307,20 @@ const solveRound = (actions: ActionItem[], slots: Slot[]) => {
             const isCircle = action.types.includes('圈');
             const nextEffectiveIndex = effectiveCountSoFar + (isCircle ? 0 : 1);
 
-            // [修改] 固定位置检查：支持 =, <, > 逻辑
+            // 1. 硬约束检查 (Pruning) - 保持不变
             if (action.constraint === 'FIXED') {
-                // 圈不能被固定位置约束（因为它不占序列号）
                 if (isCircle) continue;
-
                 const targetIndex = action.fixedIndex || 1;
                 const op = action.fixedOperator || 'AT';
-
                 if (op === 'AT' && nextEffectiveIndex !== targetIndex) continue;
                 if (op === 'BEFORE' && !(nextEffectiveIndex < targetIndex)) continue;
                 if (op === 'AFTER' && !(nextEffectiveIndex > targetIndex)) continue;
             }
-
-            // [剪枝] 紧跟检查 (检查物理顺序 path 的最后一个)
             if (action.constraint === 'IMMEDIATE') {
                 if (path.length === 0) continue;
                 const prevAction = path[path.length - 1];
                 if (prevAction.id !== action.immediateTargetId) continue;
             }
-
-            // [剪枝] 依赖检查
             const parents = dependencies.get(action.id);
             let parentsSatisfied = true;
             if (parents && parents.size > 0) {
@@ -268,6 +333,7 @@ const solveRound = (actions: ActionItem[], slots: Slot[]) => {
             }
             if (!parentsSatisfied) continue;
 
+            // 2. 递归
             used.add(action.id);
             path.push(action);
             dfs(path, used);
@@ -275,12 +341,19 @@ const solveRound = (actions: ActionItem[], slots: Slot[]) => {
             used.delete(action.id);
         }
     };
+
     dfs([], new Set());
-    return { solutions: validResults, error: Object.keys(validResults).length === 0 ? "无解 (冲突)" : null };
+
+    // 转换回旧格式返回
+    const solutions: Record<number, ActionItem[]> = {};
+    Object.entries(bestResults).forEach(([gold, res]) => {
+        solutions[Number(gold)] = res.path;
+    });
+
+    return { solutions, error: Object.keys(solutions).length === 0 ? "无解 (冲突)" : null };
 };
 
 // --- 组件定义 ---
-
 const ElementSelector = ({ current, onChange }: { current: ElementType; onChange: (e: ElementType) => void; }) => {
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -326,67 +399,52 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
     const [editingId, setEditingId] = useState<string | null>(null);
     const [swapSourceId, setSwapSourceId] = useState<string | null>(null);
     const [selectedRow, setSelectedRow] = useState<string | null>(null);
+    const [sortMode, setSortMode] = useState<'AMOUNT' | 'MATCH'>('AMOUNT'); // 商品排序模式
+
+    // Memoize solution
     const { solutions, error } = useMemo(() => solveRound(round.actions, slots), [round.actions, slots]);
 
+    // Helpers
     const updateActions = (newActions: ActionItem[]) => onUpdate({ ...round, actions: newActions });
+    const updateActionItem = (id: string, updates: Partial<ActionItem>) => updateActions(round.actions.map(a => a.id === id ? { ...a, ...updates } : a));
+
+    // Add default action
     const addAction = (slotIndex: number) => {
         updateActions([...round.actions, {
             id: generateId(),
-            types: ['A', '↑', '↓'], // 默认全选
+            types: ['A', '↑', '↓'],
             slotIndex,
             constraint: 'NONE',
-            relativeRules: []
+            relativeRules: [],
+            preferences: [] // Init preferences
         }]);
     };
-    const toggleActionType = (id: string, type: ActionType) => {
-        const action = round.actions.find(a => a.id === id);
-        if (!action) return;
 
-        let newTypes: ActionType[] = [];
-
-        if (type === '圈') {
-            // 选圈：互斥，清空其他
-            newTypes = ['圈'];
-        } else {
-            // 选普通：如果之前是圈，清空圈
-            const currentWithoutCircle = action.types.filter(t => t !== '圈');
-
-            if (currentWithoutCircle.includes(type)) {
-                // 取消选择 (如果不止一个)
-                if (currentWithoutCircle.length > 1) {
-                    newTypes = currentWithoutCircle.filter(t => t !== type);
-                } else {
-                    return; // 至少保留一个
-                }
-            } else {
-                // 添加选择
-                newTypes = [...currentWithoutCircle, type];
-            }
-        }
-
-        updateActionItem(id, { types: newTypes });
-    };
-    const updateActionItem = (id: string, updates: Partial<ActionItem>) => updateActions(round.actions.map(a => a.id === id ? { ...a, ...updates } : a));
+    // Remove logic
     const removeAction = (id: string) => {
         updateActions(round.actions.filter(a => a.id !== id));
         if (editingId === id) setEditingId(null);
     };
 
-    // Relative Rules
-    const addRule = (actionId: string) => updateActions(round.actions.map(a => a.id === actionId ? {
-        ...a,
-        relativeRules: [...a.relativeRules, { id: generateId(), type: 'BEFORE' as RelativeType, targetId: '' }]
-    } : a));
-    const updateRule = (actionId: string, ruleId: string, updates: Partial<RelativeRule>) => updateActions(round.actions.map(a => a.id === actionId ? {
-        ...a,
-        relativeRules: a.relativeRules.map(r => r.id === ruleId ? { ...r, ...updates } : r)
-    } : a));
-    const removeRule = (actionId: string, ruleId: string) => updateActions(round.actions.map(a => a.id === actionId ? {
-        ...a,
-        relativeRules: a.relativeRules.filter(r => r.id !== ruleId)
-    } : a));
+    // Toggle Type logic
+    const toggleActionType = (id: string, type: ActionType) => {
+        const action = round.actions.find(a => a.id === id);
+        if (!action) return;
+        let newTypes: ActionType[] = [];
+        if (type === '圈') newTypes = ['圈'];
+        else {
+            const currentWithoutCircle = action.types.filter(t => t !== '圈');
+            if (currentWithoutCircle.includes(type)) {
+                if (currentWithoutCircle.length > 1) newTypes = currentWithoutCircle.filter(t => t !== type);
+                else return;
+            } else {
+                newTypes = [...currentWithoutCircle, type];
+            }
+        }
+        updateActionItem(id, { types: newTypes });
+    };
 
-    // Swap
+    // Swap logic
     const handleSwapClick = (id: string) => {
         if (swapSourceId === null) setSwapSourceId(id);
         else if (swapSourceId === id) setSwapSourceId(null);
@@ -398,6 +456,7 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
                 const temp = newActions[idx1];
                 newActions[idx1] = newActions[idx2];
                 newActions[idx2] = temp;
+                // Swap slots
                 const tempSlot = newActions[idx1].slotIndex;
                 newActions[idx1].slotIndex = newActions[idx2].slotIndex;
                 newActions[idx2].slotIndex = tempSlot;
@@ -406,58 +465,63 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
             setSwapSourceId(null);
         }
     };
-    const handleCopyTable = () => {
-        const rows = Object.entries(ITEMS_DICT)
-            .filter(([_, price]) => solutions[price]) // 只复制可做到的
-            .map(([name, price]) => {
-                return [
-                    formatItemName(name, price),
-                    ...getSlotContent(solutions[price])
-                ];
-            });
 
-        // 如果需要连同“不买任何物品”一起复制，可取消注释下面这行：
+    // Copy logic
+    const getSortedItems = () => {
+        const entries = Object.entries(ITEMS_DICT).map(([name, price]) => {
+            const solution = solutions[price];
+            const matchScore = solution ? calculatePreferenceScore(solution) : -Infinity;
+            return { name, price, solution, matchScore };
+        });
+
+        return entries.sort((a, b) => {
+            if (sortMode === 'AMOUNT') {
+                return a.price - b.price;
+            }
+            const diff = b.matchScore - a.matchScore;
+            return diff !== 0 ? diff : a.price - b.price;
+        });
+    };
+
+    const handleCopyTable = () => {
+        const sortedItems = getSortedItems().filter(item => item.solution);
+        const rows = sortedItems.map(item => [
+            formatItemName(item.name, item.price),
+            ...getSlotContent(item.solution!)
+        ]);
+        const emptyItemSolution = getActionForEmptyItem(solutions).solution;
         if (emptyItemSolution) rows.push([EMPTY_ITEM_LABEL, ...getSlotContent(emptyItemSolution)]);
         if (rows.length > 0) copyToClipboard(rows);
     };
 
+    // --- Row Renderer ---
     const getRow = (isSelected: boolean, name: string, solution: ActionItem[], price?: number) => {
-        const slotContents: string[] = getSlotContent(solution);
-
+        const slotContents = getSlotContent(solution);
         return (
             <tr key={name} onClick={() => setSelectedRow(isSelected ? null : name)}
                 className={`transition-all cursor-pointer border-b border-slate-50 last:border-0 ${!solution ? 'opacity-40 grayscale hover:grayscale-0' : ''}`}>
                 <td className={`p-3 font-medium border-r border-slate-100 ${isSelected ? 'bg-indigo-50 text-indigo-700' : 'bg-white text-slate-800'}`}>
                     <div className="font-bold">{name}</div>
-                    {price != null && (<div
-                        className="text-[10px] opacity-60 bg-black/5 inline-block px-1.5 rounded mt-0.5">💰 {price}</div>)}
+                    {price != null && <div
+                        className="text-[10px] opacity-60 bg-black/5 inline-block px-1.5 rounded mt-0.5">💰 {price}</div>}
                 </td>
                 {slots.map((s, idx) => (
                     <td key={idx}
                         className={`p-3 border-r border-white font-mono font-bold ${isSelected ? 'bg-indigo-50 text-indigo-900' : `${ELEMENTS[s.element].lightBg} text-slate-600`}`}>
-                        {solution ? (slotContents[idx] ||
-                            <span className="opacity-30 font-normal">-</span>) : '-'}
+                        {solution ? (slotContents[idx] || <span className="opacity-30 font-normal">-</span>) : '-'}
                     </td>
                 ))}
-                {/* [修改] 第 7 列：复制按钮包含第1列内容 */}
                 <td className="p-3 text-center">
-                    {solution && (
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                // 修改点：加入第一列数据
-                                copyToClipboard([[formatItemName(name, price), ...slotContents]]);
-                            }}
-                            className="text-slate-400 hover:text-indigo-600 p-1 rounded hover:bg-slate-100"
-                            title="复制该行"
-                        >
-                            <Copy size={14}/>
-                        </button>
-                    )}
+                    {solution && <button onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard([[formatItemName(name, price), ...slotContents]]);
+                    }} className="text-slate-400 hover:text-indigo-600 p-1 rounded hover:bg-slate-100"><Copy size={14}/>
+                    </button>}
                 </td>
             </tr>
         );
-    }
+    };
+
     const emptyItemSolution = getActionForEmptyItem(solutions).solution;
 
     return (
@@ -474,11 +538,11 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
                 </div>
                 <div className="flex gap-2">
                     <button onClick={onClone}
-                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded" title="复制">
-                        <Copy size={16}/></button>
+                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded"><Copy
+                        size={16}/></button>
                     <button onClick={onDelete}
-                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded" title="删除">
-                        <Trash2 size={16}/></button>
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"><Trash2
+                        size={16}/></button>
                 </div>
             </div>
 
@@ -487,7 +551,7 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
                     <div className="mb-2 text-[10px] text-slate-400 flex flex-wrap gap-4 select-none">
                         <span>① 点击卡片编辑操作</span>
                         <span className="flex items-center gap-1">② 右下角 <ArrowRightLeft size={10}/> 交换顺序</span>
-                        <span>③ 左上角为唯一标识</span>
+                        <span>③ 虚线框和灰色序号表示软偏好(尽量满足)</span>
                         <span>④ “{">"}” = 在某操作之前，“{"<"}” = 在某操作之后，“{"<<"}” = 紧跟某操作</span>
                     </div>
 
@@ -499,6 +563,52 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
                                     {round.actions.filter(a => a.slotIndex === slot.index).map((action) => {
                                         const displayId = getDisplayId(action.id, round.actions);
                                         const isSwapping = swapSourceId === action.id;
+
+                                        // 1. 聚合 Fixed 信息 (Hard + Soft)
+                                        const fixedItems: { val: number; op: FixedOperator; isSoft: boolean }[] = [];
+                                        // Hard Fixed
+                                        if (action.constraint === 'FIXED') {
+                                            fixedItems.push({
+                                                val: action.fixedIndex || 1,
+                                                op: action.fixedOperator || 'AT',
+                                                isSoft: false
+                                            });
+                                        }
+                                        // Soft Fixed
+                                        (action.preferences || []).forEach(p => {
+                                            if (p.type === 'FIXED') {
+                                                fixedItems.push({
+                                                    val: p.fixedIndex || 1,
+                                                    op: p.fixedOperator || 'AT',
+                                                    isSoft: true
+                                                });
+                                            }
+                                        });
+                                        // 排序：从小到大
+                                        fixedItems.sort((a, b) => a.val - b.val);
+
+                                        // 2. 聚合 Badge 信息 (Hard Relative + Soft All)
+                                        const badges: { label: React.ReactNode; isSoft: boolean }[] = [];
+
+                                        // Hard Relative
+                                        if (action.constraint === 'RELATIVE') {
+                                            action.relativeRules.forEach(r => {
+                                                const rType = r.type === 'BEFORE' ? '>' : '<';
+                                                const target = getDisplayId(r.targetId, round.actions);
+                                                badges.push({ label: `${rType}${target}`, isSoft: false });
+                                            });
+                                        }
+                                        // Soft Prefs (Relative, Early, Late)
+                                        (action.preferences || []).forEach(p => {
+                                            if (p.type === 'EARLY') badges.push({ label: '靠前', isSoft: true });
+                                            else if (p.type === 'LATE') badges.push({ label: '靠后', isSoft: true });
+                                            else if (p.type === 'RELATIVE') {
+                                                const rType = p.relativeType === 'BEFORE' ? '>' : '<';
+                                                const target = getDisplayId(p.targetId || '', round.actions);
+                                                badges.push({ label: `${rType}${target}`, isSoft: true });
+                                            }
+                                        });
+
                                         return (
                                             <div key={action.id}
                                                  className={`relative rounded border select-none transition-all flex flex-col overflow-hidden group min-h-[3.5rem] bg-white ${isSwapping ? 'border-indigo-500 ring-2 ring-indigo-500/20 z-10' : 'border-slate-200 hover:border-indigo-300'}`}>
@@ -510,49 +620,62 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
                                                 }}
                                                         className="absolute top-0 right-0 p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity z-20">
                                                     <X size={12} strokeWidth={3}/></button>
+
                                                 <div onClick={() => setEditingId(action.id)}
-                                                     className="flex-1 p-2 pt-3 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-slate-50">
-                                                    {action.constraint === 'NONE' && <span
-                                                        className="text-xs font-bold text-slate-600">{getActionLabel(action.types)}</span>}
-                                                    {action.constraint === 'FIXED' &&
-                                                        <div className="flex items-baseline gap-0.5">
-                                                            {/* [修改] 根据操作符显示前缀 */}
-                                                            <span
-                                                                className="text-lg font-black text-amber-500 leading-none">
-                                                                {action.fixedOperator === 'BEFORE' ? '<' :
-                                                                    action.fixedOperator === 'AFTER' ? '>' : ''}
-                                                                {action.fixedIndex}
-                                                            </span>
-                                                            <span
-                                                                className="text-xs font-bold text-slate-700">{getActionLabel(action.types)}</span>
-                                                        </div>}
-                                                    {/* [新增] 紧跟展示 */}
-                                                    {action.constraint === 'IMMEDIATE' && (
+                                                     className="flex-1 p-2 pt-3 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-slate-50 gap-0.5">
+
+                                                    {/* 主体内容：Fixed + Action */}
+                                                    {action.constraint === 'IMMEDIATE' ? (
+                                                        // Immediate 特殊样式
                                                         <div
-                                                            className="flex items-center justify-center gap-1 bg-indigo-50 px-1 py-0.5 rounded border border-indigo-100">
+                                                            className="flex items-center justify-center gap-1 bg-indigo-50 px-1 py-0.5 rounded border border-indigo-100 mb-0.5">
                                                             <span
                                                                 className="text-xs font-bold text-slate-700">{getActionLabel(action.types)}</span>
                                                             <span className="text-[10px] text-indigo-400">{'<<'}</span>
                                                             <span
-                                                                className="text-[8px] font-mono bg-white border border-indigo-200 rounded px-1 text-indigo-600">
-                {getDisplayId(action.immediateTargetId || '', round.actions)}
-            </span>
+                                                                className="text-[8px] font-mono bg-white border border-indigo-200 rounded px-1 text-indigo-600">{getDisplayId(action.immediateTargetId || '', round.actions)}</span>
                                                         </div>
-                                                    )}
-                                                    {action.constraint === 'RELATIVE' && (
-                                                        <div className="flex flex-col items-center gap-0.5 w-full">
+                                                    ) : (
+                                                        // 标准样式：Fixed + Action
+                                                        <div
+                                                            className="flex items-baseline justify-center gap-1 flex-wrap w-full">
+                                                            {/* Fixed 序号部分 */}
+                                                            {fixedItems.length > 0 && (
+                                                                <div className="flex items-baseline">
+                                                                    {fixedItems.map((f, i) => (
+                                                                        <span key={i}
+                                                                              className={`text-sm font-black leading-none whitespace-nowrap ${f.isSoft ? 'text-gray-300' : 'text-amber-500'}`}>
+                                                                            {f.op === 'BEFORE' ? '<' : f.op === 'AFTER' ? '>' : ''}{f.val}
+                                                                            {i < fixedItems.length - 1 && <span
+                                                                                className="text-gray-300 font-normal mr-0.5">,</span>}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                            {/* 操作名 */}
                                                             <span
                                                                 className="text-xs font-bold text-slate-700">{getActionLabel(action.types)}</span>
-                                                            <div
-                                                                className="flex flex-wrap justify-center gap-0.5 w-full">
-                                                                {action.relativeRules.map(r => (
-                                                                    <span key={r.id}
-                                                                          className={`text-[8px] px-1 rounded-sm font-mono whitespace-nowrap border ${r.type === 'BEFORE' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-purple-50 text-purple-700 border-purple-100'}`}>{r.type === 'BEFORE' ? '>' : '<'}{getDisplayId(r.targetId, round.actions)}</span>
-                                                                ))}
-                                                            </div>
                                                         </div>
                                                     )}
+
+                                                    {/* 统一 Badge 区域 (硬 Relative + 所有软偏好) */}
+                                                    {badges.length > 0 && (
+                                                        <div
+                                                            className="flex flex-wrap justify-center gap-1 w-full px-1">
+                                                            {badges.map((b, i) => (
+                                                                <span key={i}
+                                                                      className={`text-[9px] font-mono font-bold px-1 py-[1px] rounded border leading-none whitespace-nowrap ${b.isSoft
+                                                                          ? 'border-dashed border-slate-300 text-slate-400 bg-slate-50'
+                                                                          : 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                                                                      }`}>
+                                                                    {b.label}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
                                                 </div>
+
                                                 <button onClick={(e) => {
                                                     e.stopPropagation();
                                                     handleSwapClick(action.id);
@@ -571,18 +694,22 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
                     </div>
 
                     <div className="border-t border-slate-100 pt-4">
-                        {/* [修改] 将提示文字和按钮放在一行 */}
                         <div className="flex justify-between items-end mb-2">
-                            <div className="text-[10px] text-slate-400 italic">
-                                * 若出现本回合无法购买的商品，按任意顺序操作均可
+                            <div className="text-[10px] text-slate-400 italic">*
+                                若出现本回合无法购买的商品，按任意顺序操作均可
                             </div>
-                            {/* [新增] 批量复制按钮 */}
-                            <button
-                                onClick={handleCopyTable}
-                                className="flex items-center gap-1 text-xs text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded transition-colors"
-                            >
-                                <Copy size={12}/> 复制可行方案
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setSortMode(sortMode === 'AMOUNT' ? 'MATCH' : 'AMOUNT')}
+                                    className="px-2 py-1 text-xs font-medium rounded border border-slate-200 text-slate-600 bg-white hover:bg-slate-50"
+                                >
+                                    →{sortMode === 'AMOUNT' ? '按要求匹配度排序' : '按商品金额排序'}
+                                </button>
+                                <button onClick={handleCopyTable}
+                                        className="flex items-center gap-1 text-xs text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded transition-colors">
+                                    <Copy size={12}/> 复制可行方案
+                                </button>
+                            </div>
                         </div>
                         {error ? (
                             <div
@@ -594,18 +721,16 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
                                     <thead className="bg-slate-100 text-slate-500 font-bold border-b border-slate-200">
                                     <tr>
                                         <th className="p-3 w-1/6">物品</th>
-                                        {slots.map((s) => (
-                                            <th key={s.index}
-                                                className={`p-3 w-1/6 ${ELEMENTS[s.element].lightBg} text-slate-700 border-l border-white`}>{s.index + 1}号位 <span
-                                                className="opacity-50 font-normal">({s.element})</span></th>
-                                        ))}
+                                        {slots.map((s) => (<th key={s.index}
+                                                               className={`p-3 w-1/6 ${ELEMENTS[s.element].lightBg} text-slate-700 border-l border-white`}>{s.index + 1}号位 <span
+                                            className="opacity-50 font-normal">({s.element})</span></th>))}
                                         <th className="p-3 w-10"></th>
                                     </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                    {Object.entries(ITEMS_DICT).map(([name, price]) => {
-                                        return getRow(selectedRow === name, name, solutions[price], price)
-                                    })}
+                                    {getSortedItems().map(({ name, price, solution }) =>
+                                        getRow(selectedRow === name, name, solution, price)
+                                    )}
                                     {emptyItemSolution != null && getRow(selectedRow === EMPTY_ITEM_LABEL, EMPTY_ITEM_LABEL, emptyItemSolution)}
                                     </tbody>
                                 </table>
@@ -619,166 +744,335 @@ const RoundComponent = ({ round, slots, index, onUpdate, onDelete, onClone }: {
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20 backdrop-blur-[1px]">
                     <div
-                        className="bg-white rounded-xl shadow-2xl border border-slate-100 w-full max-w-sm overflow-hidden"
+                        className="bg-white rounded-xl shadow-2xl border border-slate-100 w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
                         onClick={(e) => e.stopPropagation()}>
                         {(() => {
                             const action = round.actions.find(a => a.id === editingId);
                             if (!action) return null;
                             const displayId = getDisplayId(action.id, round.actions);
+                            // [修复] 定义安全访问的 preferences，防止 undefined
+                            const safePreferences = action.preferences || [];
+
+                            // Helper to update specific preference
+                            const updatePref = (prefId: string, diff: Partial<PreferenceRule>) => {
+                                updateActionItem(action.id, {
+                                    preferences: safePreferences.map(p => p.id === prefId ? { ...p, ...diff } : p)
+                                });
+                            };
+                            const addPref = (type: PreferenceType) => {
+                                updateActionItem(action.id, {
+                                    preferences: [...safePreferences, {
+                                        id: generateId(),
+                                        type,
+                                        relativeType: 'BEFORE',
+                                        fixedOperator: 'AT',
+                                        fixedIndex: 1
+                                    }]
+                                });
+                            };
+                            const removePref = (prefId: string) => {
+                                updateActionItem(action.id, {
+                                    preferences: safePreferences.filter(p => p.id !== prefId)
+                                });
+                            };
+
                             return (
                                 <>
                                     <div
-                                        className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex justify-between items-center">
-                                        <div className="flex items-center gap-2"><span
-                                            className="font-mono text-xs font-bold bg-slate-200 px-1.5 py-0.5 rounded text-slate-600">{displayId}</span><span
-                                            className="font-bold text-slate-700">编辑操作</span></div>
+                                        className="bg-slate-50 px-5 py-4 border-b border-slate-100 flex justify-between items-center shrink-0">
+                                        <div className="flex items-center gap-2">
+                                            <span
+                                                className="font-mono text-xs font-bold bg-slate-200 px-1.5 py-0.5 rounded text-slate-600">{displayId}</span>
+                                            <span className="font-bold text-slate-700">编辑操作</span>
+                                        </div>
                                         <button onClick={() => setEditingId(null)}
                                                 className="text-slate-400 hover:text-slate-600"><X size={18}/></button>
                                     </div>
-                                    <div className="p-4 space-y-4">
-                                        <div className="space-y-1">
+
+                                    <div className="p-5 overflow-y-auto space-y-6">
+                                        {/* 1. 操作类型 */}
+                                        <div className="space-y-2">
                                             <label
-                                                className="text-xs font-bold text-slate-400 uppercase">操作类型</label>
+                                                className="text-xs font-bold text-slate-400 uppercase tracking-wider">操作类型</label>
                                             <div className="grid grid-cols-4 gap-2">
                                                 {['A', '↑', '↓', '圈'].map(t => {
                                                     const isSelected = action.types.includes(t as ActionType);
                                                     return (
-                                                        <button
-                                                            key={t}
-                                                            onClick={() => toggleActionType(action.id, t as ActionType)}
-                                                            className={`py-2 rounded text-sm font-bold border transition-all ${
-                                                                isSelected
-                                                                    ? 'bg-indigo-600 text-white border-indigo-600'
-                                                                    : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
-                                                            }`}
-                                                        >
+                                                        <button key={t}
+                                                                onClick={() => toggleActionType(action.id, t as ActionType)}
+                                                                className={`py-2 rounded text-sm font-bold border transition-all ${isSelected ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'}`}>
                                                             {t}
                                                         </button>
                                                     );
                                                 })}
                                             </div>
                                         </div>
-                                        <div className="space-y-1">
-                                            <label
-                                                className="text-xs font-bold text-slate-400 uppercase">顺序要求</label>
-                                            <div className="flex rounded-lg bg-slate-100 p-1">{[
-                                                { v: 'NONE', l: '无' },
-                                                { v: 'FIXED', l: '固定' },
-                                                { v: 'RELATIVE', l: '相对' },
-                                                { v: 'IMMEDIATE', l: '紧跟' } // [新增]
-                                            ].map(opt => (
-                                                <button key={opt.v} onClick={() => updateActionItem(action.id, {
-                                                    constraint: opt.v as ConstraintType,
-                                                    fixedIndex: 1,
-                                                    fixedOperator: 'AT',
-                                                    relativeRules: [],
-                                                    immediateTargetId: '',
-                                                })}
-                                                        className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${action.constraint === opt.v ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{opt.l}</button>))}</div>
-                                        </div>
-                                        {action.constraint === 'FIXED' && (
-                                            <div
-                                                className="flex flex-col gap-2 py-2 bg-amber-50 rounded-lg border border-amber-100 p-3">
-                                                {/* [新增] 操作符选择器 */}
-                                                <div className="flex rounded bg-white border border-amber-200 p-0.5">
-                                                    {[
-                                                        { v: 'BEFORE', l: '第X个前 (<)' },
-                                                        { v: 'AT', l: '第X个 (=)' },
-                                                        { v: 'AFTER', l: '第X个后 (>)' }
-                                                    ].map(opt => (
-                                                        <button
-                                                            key={opt.v}
-                                                            onClick={() => updateActionItem(action.id, { fixedOperator: opt.v as FixedOperator })}
-                                                            className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${
-                                                                (action.fixedOperator || 'AT') === opt.v
-                                                                    ? 'bg-amber-100 text-amber-700'
-                                                                    : 'text-slate-400 hover:bg-slate-50'
-                                                            }`}
-                                                        >
-                                                            {opt.l}
-                                                        </button>
-                                                    ))}
-                                                </div>
 
-                                                {/* 数字选择器 (保持原有逻辑，微调样式) */}
-                                                <div className="flex items-center justify-center gap-3">
-                                                    <span className="text-sm text-amber-800 font-medium">X = </span>
+                                        <div className="border-t border-slate-100"></div>
+
+                                        {/* 2. 硬性约束 (Hard Constraints) */}
+                                        <div className="space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <label
+                                                    className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                                                    <div className="w-2 h-2 rounded-full bg-slate-800"></div>
+                                                    硬性约束 (必须满足)
+                                                </label>
+                                            </div>
+
+                                            <div className="flex rounded-lg bg-slate-100 p-1">
+                                                {[{ v: 'NONE', l: '无' }, { v: 'FIXED', l: '固定' }, {
+                                                    v: 'RELATIVE',
+                                                    l: '相对'
+                                                }, { v: 'IMMEDIATE', l: '紧跟' }].map(opt => (
+                                                    <button key={opt.v} onClick={() => updateActionItem(action.id, {
+                                                        constraint: opt.v as ConstraintType,
+                                                        fixedIndex: 1,
+                                                        fixedOperator: 'AT',
+                                                        relativeRules: [],
+                                                        immediateTargetId: ''
+                                                    })}
+                                                            className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${action.constraint === opt.v ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{opt.l}</button>
+                                                ))}
+                                            </div>
+
+                                            {action.constraint === 'FIXED' && (
+                                                <div
+                                                    className="flex flex-col gap-2 py-2 bg-slate-50 rounded-lg border border-slate-200 p-3 animate-in fade-in slide-in-from-top-2 duration-200">
                                                     <div
-                                                        className="flex items-center bg-white rounded border border-amber-200">
-                                                        <button
-                                                            onClick={() => updateActionItem(action.id, { fixedIndex: Math.max(1, (action.fixedIndex || 1) - 1) })}
-                                                            className="px-3 py-1 text-amber-600 hover:bg-amber-50 font-bold border-r border-amber-100">-
-                                                        </button>
-                                                        <span
-                                                            className="w-10 text-center font-bold text-amber-700">{action.fixedIndex || 1}</span>
-                                                        <button
-                                                            onClick={() => updateActionItem(action.id, { fixedIndex: Math.min(20, (action.fixedIndex || 1) + 1) })}
-                                                            className="px-3 py-1 text-amber-600 hover:bg-amber-50 font-bold border-l border-amber-100">+
-                                                        </button>
+                                                        className="flex rounded bg-white border border-slate-200 p-0.5">
+                                                        {[{ v: 'BEFORE', l: '第X个前 (<)' }, {
+                                                            v: 'AT',
+                                                            l: '第X个 (=)'
+                                                        }, { v: 'AFTER', l: '第X个后 (>)' }].map(opt => (
+                                                            <button key={opt.v}
+                                                                    onClick={() => updateActionItem(action.id, { fixedOperator: opt.v as FixedOperator })}
+                                                                    className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${(action.fixedOperator || 'AT') === opt.v ? 'bg-slate-200 text-slate-800' : 'text-slate-400 hover:bg-slate-50'}`}>{opt.l}</button>
+                                                        ))}
+                                                    </div>
+                                                    <div className="flex items-center justify-center gap-3">
+                                                        <span className="text-sm text-slate-500 font-medium">X = </span>
+                                                        <div
+                                                            className="flex items-center bg-white rounded border border-slate-200">
+                                                            <button
+                                                                onClick={() => updateActionItem(action.id, { fixedIndex: Math.max(1, (action.fixedIndex || 1) - 1) })}
+                                                                className="px-3 py-1 text-slate-500 hover:bg-slate-50 font-bold border-r border-slate-100">-
+                                                            </button>
+                                                            <span
+                                                                className="w-10 text-center font-bold text-slate-700">{action.fixedIndex || 1}</span>
+                                                            <button
+                                                                onClick={() => updateActionItem(action.id, { fixedIndex: Math.min(20, (action.fixedIndex || 1) + 1) })}
+                                                                className="px-3 py-1 text-slate-500 hover:bg-slate-50 font-bold border-l border-slate-100">+
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 </div>
+                                            )}
+
+                                            {action.constraint === 'IMMEDIATE' && (
+                                                <div
+                                                    className="flex items-center gap-2 bg-slate-50 p-3 rounded-lg border border-slate-200 animate-in fade-in slide-in-from-top-2 duration-200">
+                                                    <span
+                                                        className="text-xs font-bold text-slate-500 whitespace-nowrap">紧接在</span>
+                                                    <select value={action.immediateTargetId || ''}
+                                                            onChange={(e) => updateActionItem(action.id, { immediateTargetId: e.target.value })}
+                                                            className="flex-1 text-xs border border-slate-300 rounded py-1.5 pl-2 bg-white focus:ring-2 focus:ring-indigo-500">
+                                                        <option value="">选择操作...</option>
+                                                        {slots.map(s => {
+                                                            const groupOps = round.actions.filter(a => a.slotIndex === s.index && a.id !== action.id);
+                                                            if (groupOps.length === 0) return null;
+                                                            return <optgroup key={s.index}
+                                                                             label={`${s.index + 1}号位 (${s.element})`}>{groupOps.map(op =>
+                                                                <option key={op.id}
+                                                                        value={op.id}>{s.index + 1}号位-{getActionLabel(op.types)} ({getDisplayId(op.id, round.actions)})</option>)}</optgroup>
+                                                        })}
+                                                    </select>
+                                                    <span
+                                                        className="text-xs font-bold text-slate-500 whitespace-nowrap">之后</span>
+                                                </div>
+                                            )}
+
+                                            {action.constraint === 'RELATIVE' && (
+                                                <div
+                                                    className="space-y-2 bg-slate-50 p-2 rounded-lg border border-slate-200 animate-in fade-in slide-in-from-top-2 duration-200">
+                                                    {action.relativeRules.map(rule => (
+                                                        <div key={rule.id}
+                                                             className="flex items-center gap-2 bg-white p-1.5 rounded border border-slate-200 shadow-sm">
+                                                            <button
+                                                                onClick={() => updateActions(round.actions.map(a => a.id === action.id ? {
+                                                                    ...a,
+                                                                    relativeRules: a.relativeRules.filter(r => r.id !== rule.id)
+                                                                } : a))} className="text-slate-300 hover:text-red-500">
+                                                                <X size={14}/></button>
+                                                            <select value={rule.targetId}
+                                                                    onChange={(e) => updateActions(round.actions.map(a => a.id === action.id ? {
+                                                                        ...a,
+                                                                        relativeRules: a.relativeRules.map(r => r.id === rule.id ? {
+                                                                            ...r,
+                                                                            targetId: e.target.value
+                                                                        } : r)
+                                                                    } : a))}
+                                                                    className="flex-1 text-xs border-slate-200 rounded py-1 pl-1 bg-transparent">
+                                                                <option value="">选择操作...</option>
+                                                                {slots.map(s => {
+                                                                    const groupOps = round.actions.filter(a => a.slotIndex === s.index && a.id !== action.id && a.slotIndex !== action.slotIndex);
+                                                                    if (groupOps.length === 0) return null;
+                                                                    return <optgroup key={s.index}
+                                                                                     label={`${s.index + 1}号位 (${s.element})`}>{groupOps.map(op =>
+                                                                        <option key={op.id}
+                                                                                value={op.id}>{s.index + 1}号位-{getActionLabel(op.types)} ({getDisplayId(op.id, round.actions)})</option>)}</optgroup>
+                                                                })}
+                                                            </select>
+                                                            <button
+                                                                onClick={() => updateActions(round.actions.map(a => a.id === action.id ? {
+                                                                    ...a,
+                                                                    relativeRules: a.relativeRules.map(r => r.id === rule.id ? {
+                                                                        ...r,
+                                                                        type: r.type === 'BEFORE' ? 'AFTER' : 'BEFORE'
+                                                                    } : r)
+                                                                } : a))}
+                                                                className={`shrink-0 px-2 py-1 rounded text-xs font-bold w-12 text-center ${rule.type === 'BEFORE' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{rule.type === 'BEFORE' ? '之前' : '之后'}</button>
+                                                        </div>
+                                                    ))}
+                                                    <button
+                                                        onClick={() => updateActions(round.actions.map(a => a.id === action.id ? {
+                                                            ...a,
+                                                            relativeRules: [...a.relativeRules, {
+                                                                id: generateId(),
+                                                                type: 'BEFORE',
+                                                                targetId: ''
+                                                            }]
+                                                        } : a))}
+                                                        className="w-full py-1.5 text-xs font-medium text-indigo-600 border border-dashed border-indigo-200 rounded hover:bg-indigo-50">+
+                                                        添加条件
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="border-t border-slate-100"></div>
+
+                                        {/* 3. 软性偏好 (Soft Preferences) */}
+                                        <div className="space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <label
+                                                    className="text-xs font-bold text-gray-500 flex items-center gap-2">
+                                                    <div
+                                                        className="w-2 h-2 rounded-full border border-gray-400 border-dashed"></div>
+                                                    软性偏好 (尽量满足)
+                                                </label>
+
+                                                {/* Add Preference Buttons */}
+                                                <div className="flex gap-1">
+                                                    <button onClick={() => addPref('EARLY')}
+                                                            className="px-2 py-1 text-[10px] bg-slate-50 border border-slate-200 rounded hover:bg-slate-100">+
+                                                        靠前
+                                                    </button>
+                                                    <button onClick={() => addPref('LATE')}
+                                                            className="px-2 py-1 text-[10px] bg-slate-50 border border-slate-200 rounded hover:bg-slate-100">+
+                                                        靠后
+                                                    </button>
+                                                    <button onClick={() => addPref('FIXED')}
+                                                            className="px-2 py-1 text-[10px] bg-slate-50 border border-slate-200 rounded hover:bg-slate-100">+
+                                                        固定
+                                                    </button>
+                                                    <button onClick={() => addPref('RELATIVE')}
+                                                            className="px-2 py-1 text-[10px] bg-slate-50 border border-slate-200 rounded hover:bg-slate-100">+
+                                                        相对
+                                                    </button>
+                                                </div>
                                             </div>
-                                        )}
-                                        {/* [新增] 紧跟配置界面 */}
-                                        {action.constraint === 'IMMEDIATE' && (
-                                            <div
-                                                className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200">
-                                                <span
-                                                    className="text-xs font-bold text-slate-500 whitespace-nowrap">紧接在</span>
-                                                <select
-                                                    value={action.immediateTargetId || ''}
-                                                    onChange={(e) => updateActionItem(action.id, { immediateTargetId: e.target.value })}
-                                                    className="flex-1 text-xs border border-slate-300 rounded py-1.5 pl-2 bg-white focus:ring-2 focus:ring-indigo-500"
-                                                >
-                                                    <option value="">选择操作...</option>
-                                                    {slots.map(s => {
-                                                        const groupOps = round.actions.filter(a => a.slotIndex === s.index && a.id !== action.id);
-                                                        if (groupOps.length === 0) return null;
-                                                        return (
-                                                            <optgroup key={s.index}
-                                                                      label={`${s.index + 1}号位 (${s.element})`}>
-                                                                {groupOps.map(op => (
-                                                                    <option key={op.id} value={op.id}>
-                                                                        {s.index + 1}号位-{getActionLabel(op.types)} ({getDisplayId(op.id, round.actions)})
-                                                                    </option>
-                                                                ))}
-                                                            </optgroup>
-                                                        )
-                                                    })}
-                                                </select>
-                                                <span
-                                                    className="text-xs font-bold text-slate-500 whitespace-nowrap">之后</span>
+
+                                            {safePreferences.length === 0 && (
+                                                <div
+                                                    className="text-xs text-slate-300 italic text-center py-2">暂无偏好</div>
+                                            )}
+
+                                            <div className="space-y-2">
+                                                {safePreferences.map(pref => (
+                                                    <div key={pref.id}
+                                                         className="bg-white border border-dashed border-slate-300 rounded p-2 flex gap-2 items-start group">
+                                                        {/* Type Badge */}
+                                                        <div
+                                                            className="shrink-0 px-1.5 py-0.5 bg-slate-100 text-[10px] font-bold text-slate-500 rounded border border-slate-200">
+                                                            {pref.type === 'EARLY' && '靠前'}
+                                                            {pref.type === 'LATE' && '靠后'}
+                                                            {pref.type === 'FIXED' && '固定'}
+                                                            {pref.type === 'RELATIVE' && '相对'}
+                                                        </div>
+
+                                                        {/* Config Area */}
+                                                        <div className="flex-1 space-y-2">
+                                                            {/* Fixed Config */}
+                                                            {pref.type === 'FIXED' && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <div
+                                                                        className="flex rounded bg-slate-50 border border-slate-200 p-0.5">
+                                                                        {[{ v: 'BEFORE', l: '<' }, {
+                                                                            v: 'AT',
+                                                                            l: '='
+                                                                        }, { v: 'AFTER', l: '>' }].map(opt => (
+                                                                            <button key={opt.v}
+                                                                                    onClick={() => updatePref(pref.id, { fixedOperator: opt.v as FixedOperator })}
+                                                                                    className={`px-2 py-0.5 text-[10px] font-bold rounded ${pref.fixedOperator === opt.v ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>{opt.l}</button>
+                                                                        ))}
+                                                                    </div>
+                                                                    <div
+                                                                        className="flex items-center bg-slate-50 rounded border border-slate-200">
+                                                                        <button
+                                                                            onClick={() => updatePref(pref.id, { fixedIndex: Math.max(1, (pref.fixedIndex || 1) - 1) })}
+                                                                            className="px-2 text-slate-400 hover:text-slate-600">-
+                                                                        </button>
+                                                                        <span
+                                                                            className="w-6 text-center text-xs font-bold text-slate-600">{pref.fixedIndex}</span>
+                                                                        <button
+                                                                            onClick={() => updatePref(pref.id, { fixedIndex: Math.min(20, (pref.fixedIndex || 1) + 1) })}
+                                                                            className="px-2 text-slate-400 hover:text-slate-600">+
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Relative Config */}
+                                                            {pref.type === 'RELATIVE' && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <select value={pref.targetId}
+                                                                            onChange={(e) => updatePref(pref.id, { targetId: e.target.value })}
+                                                                            className="flex-1 text-xs border border-slate-200 rounded py-1 pl-1 bg-white">
+                                                                        <option value="">选择操作...</option>
+                                                                        {slots.map(s => {
+                                                                            const groupOps = round.actions.filter(a => a.slotIndex === s.index && a.id !== action.id);
+                                                                            if (groupOps.length === 0) return null;
+                                                                            return <optgroup key={s.index}
+                                                                                             label={`${s.index + 1}号位 (${s.element})`}>{groupOps.map(op =>
+                                                                                <option key={op.id}
+                                                                                        value={op.id}>{s.index + 1}号位-{getActionLabel(op.types)} ({getDisplayId(op.id, round.actions)})</option>)}</optgroup>
+                                                                        })}
+                                                                    </select>
+                                                                    <button
+                                                                        onClick={() => updatePref(pref.id, { relativeType: pref.relativeType === 'BEFORE' ? 'AFTER' : 'BEFORE' })}
+                                                                        className={`shrink-0 px-2 py-1 rounded text-[10px] font-bold w-10 text-center ${pref.relativeType === 'BEFORE' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'}`}>
+                                                                        {pref.relativeType === 'BEFORE' ? '前' : '后'}
+                                                                    </button>
+                                                                </div>
+                                                            )}
+
+                                                            {(pref.type === 'EARLY' || pref.type === 'LATE') && (
+                                                                <div
+                                                                    className="text-[10px] text-slate-400">尽可能{pref.type === 'EARLY' ? '排在前面' : '排在后面'}</div>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Delete Button */}
+                                                        <button onClick={() => removePref(pref.id)}
+                                                                className="text-slate-300 hover:text-red-500 p-1"><X
+                                                            size={14}/></button>
+                                                    </div>
+                                                ))}
                                             </div>
-                                        )}
-                                        {action.constraint === 'RELATIVE' && <div
-                                            className="space-y-2 bg-slate-50 p-2 rounded-lg border border-slate-200">{action.relativeRules.map(rule => (
-                                            <div key={rule.id}
-                                                 className="flex items-center gap-2 bg-white p-1.5 rounded border border-slate-200 shadow-sm">
-                                                <button onClick={() => removeRule(action.id, rule.id)}
-                                                        className="text-slate-300 hover:text-red-500"><X size={14}/>
-                                                </button>
-                                                <select value={rule.targetId}
-                                                        onChange={(e) => updateRule(action.id, rule.id, { targetId: e.target.value })}
-                                                        className="flex-1 text-xs border-slate-200 rounded py-1 pl-1 bg-transparent">
-                                                    <option value="">选择操作...</option>
-                                                    {slots.map(s => {
-                                                        const groupOps = round.actions.filter(a => a.slotIndex === s.index && a.id !== action.id && a.slotIndex !== action.slotIndex);
-                                                        if (groupOps.length === 0) return null;
-                                                        return (<optgroup key={s.index}
-                                                                          label={`${s.index + 1}号位 (${s.element})`}>{groupOps.map(op => (
-                                                            <option key={op.id}
-                                                                    value={op.id}>{s.index + 1}号位-{getActionLabel(op.types)} ({getDisplayId(op.id, round.actions)})</option>))}</optgroup>)
-                                                    })}</select>
-                                                <button
-                                                    onClick={() => updateRule(action.id, rule.id, { type: rule.type === 'BEFORE' ? 'AFTER' : 'BEFORE' })}
-                                                    className={`shrink-0 px-2 py-1 rounded text-xs font-bold w-12 text-center ${rule.type === 'BEFORE' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{rule.type === 'BEFORE' ? '之前' : '之后'}</button>
-                                            </div>))}
-                                            <button onClick={() => addRule(action.id)}
-                                                    className="w-full py-1.5 text-xs font-medium text-indigo-600 border border-dashed border-indigo-200 rounded hover:bg-indigo-50">+
-                                                添加条件
-                                            </button>
-                                        </div>}
-                                        <div className="pt-2 border-t border-slate-100 flex justify-between">
+                                        </div>
+
+                                        <div className="pt-4 border-t border-slate-100 flex justify-between shrink-0">
                                             <button onClick={() => removeAction(action.id)}
                                                     className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50">
                                                 <Trash2 size={14}/> 删除操作
@@ -807,26 +1101,52 @@ const SummaryTable = ({ rounds, slots, onUpdateRound }: {
     const [editingRoundId, setEditingRoundId] = useState<string | null>(null);
     const [selectedRow, setSelectedRow] = useState<string | null>(null);
 
+    const getDisplayInfoForRound = (round: Round) => {
+        const { solutions, error } = solveRound(round.actions, slots);
+        const selectedItemName = round.selectedItemName;
+        const decisionMode: DecisionMode = round.decisionMode || 'BUY';
+        const targetPrice = (selectedItemName && selectedItemName !== EMPTY_ITEM_LABEL) ? ITEMS_DICT[selectedItemName] : null;
+
+        let displaySolution: ActionItem[] | null = null;
+        let isAchievable = false;
+
+        if (selectedItemName === EMPTY_ITEM_LABEL) {
+            ({ solution: displaySolution, isAchievable } = getActionForEmptyItem(solutions));
+        } else if (targetPrice !== null) {
+            if (decisionMode === 'BUY') {
+                if (solutions[targetPrice]) {
+                    displaySolution = solutions[targetPrice];
+                    isAchievable = true;
+                } else {
+                    const allPaths = Object.values(solutions);
+                    if (allPaths.length > 0) displaySolution = allPaths[0];
+                    isAchievable = false;
+                }
+            } else {
+                // NOT_BUY：从所有金币 != 目标金额的解中，选一条匹配度最高的
+                let bestPath: ActionItem[] | null = null;
+                let bestScore = -Infinity;
+                Object.entries(solutions).forEach(([goldStr, path]) => {
+                    const gold = Number(goldStr);
+                    if (gold === targetPrice) return;
+                    const score = calculatePreferenceScore(path);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestPath = path;
+                    }
+                });
+                displaySolution = bestPath;
+                isAchievable = false;
+            }
+        }
+
+        return { solutions, error, displaySolution, isAchievable, decisionMode, selectedItemName, targetPrice };
+    };
+
     // [新增] 处理全表复制
     const handleCopyAll = () => {
         const allRowsData = rounds.map(round => {
-            // 复用行渲染时的逻辑来获取内容
-            const { solutions } = solveRound(round.actions, slots);
-            const selectedItemName = round.selectedItemName;
-            const targetPrice = (selectedItemName && selectedItemName !== EMPTY_ITEM_LABEL) ? ITEMS_DICT[selectedItemName] : null;
-
-            let displaySolution: ActionItem[] | null = null;
-            if (selectedItemName === EMPTY_ITEM_LABEL) {
-                displaySolution = getActionForEmptyItem(solutions).solution;
-            } else if (targetPrice !== null) {
-                if (solutions[targetPrice]) displaySolution = solutions[targetPrice];
-                else {
-                    const allPaths = Object.values(solutions);
-                    if (allPaths.length > 0) displaySolution = allPaths[0];
-                }
-            }
-
-            // 获取 3-7 列内容
+            const { displaySolution } = getDisplayInfoForRound(round);
             return getSlotContent(displaySolution);
         });
         copyToClipboard(allRowsData);
@@ -850,7 +1170,7 @@ const SummaryTable = ({ rounds, slots, onUpdateRound }: {
                     <thead className="bg-slate-100 text-slate-500 font-bold border-b border-slate-200">
                     <tr>
                         <th className="p-3 w-12 text-center">回合</th>
-                        <th className="p-3 w-48">选择物品</th>
+                        <th className="p-3 w-48">购买决策</th>
                         {slots.map((s) => (
                             <th key={s.index}
                                 className={`p-3 ${ELEMENTS[s.element].lightBg} text-slate-700 border-l border-white`}>
@@ -862,64 +1182,95 @@ const SummaryTable = ({ rounds, slots, onUpdateRound }: {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                     {rounds.map((round, idx) => {
-                        const { solutions, error } = solveRound(round.actions, slots);
-                        const selectedItemName = round.selectedItemName;
-                        const targetPrice = (selectedItemName && selectedItemName !== EMPTY_ITEM_LABEL) ? ITEMS_DICT[selectedItemName] : null;
-
-                        // 确定展示的 Solution
-                        let displaySolution: ActionItem[] | null = null;
-                        let isAchievable = false;
-
-                        if (selectedItemName === EMPTY_ITEM_LABEL) {
-                            ({ solution: displaySolution, isAchievable } = getActionForEmptyItem(solutions));
-                        } else if (targetPrice !== null) {
-                            if (solutions[targetPrice]) {
-                                displaySolution = solutions[targetPrice];
-                                isAchievable = true;
-                            } else {
-                                const allPaths = Object.values(solutions);
-                                if (allPaths.length > 0) displaySolution = allPaths[0];
-                                isAchievable = false;
-                            }
-                        }
-
-                        // [新增] 如果没选任何东西，或者选了空item但也无解，尝试默认展示一个“空item”的解（如果有）作为预览
-                        // if (!selectedItemName && !displaySolution) {
-                        //     const emptyGoldStr = Object.keys(solutions).find(g => !REAL_ITEM_PRICES.has(Number(g)));
-                        //     if (emptyGoldStr) displaySolution = solutions[Number(emptyGoldStr)];
-                        // }
-
+                        const {
+                            solutions,
+                            error,
+                            displaySolution,
+                            decisionMode,
+                            selectedItemName,
+                            targetPrice
+                        } = getDisplayInfoForRound(round);
                         const slotContents: string[] = getSlotContent(displaySolution);
 
                         const isSelected = selectedRow === round.id;
                         const hasConstraintConflict = !!error;
+
+                        const availablePrices = Object.keys(solutions).map(Number);
+                        const isEmptySelected = selectedItemName === EMPTY_ITEM_LABEL;
+                        const canBuySelected =
+                            !!targetPrice && availablePrices.includes(targetPrice);
+                        const emptyCanAchieve =
+                            isEmptySelected &&
+                            availablePrices.some(p => !REAL_ITEM_PRICES.has(p));
+
+                        const decisionLabel =
+                            decisionMode === 'BUY' ? '购买' : '不买';
+
+                        const itemDisplayLabel =
+                            selectedItemName || '选择商品 / 什么都不买';
 
                         return (
                             <tr key={round.id} onClick={() => setSelectedRow(isSelected ? null : round.id)}
                                 className={`transition-all cursor-pointer border-b border-slate-50 last:border-0 ${isSelected ? 'bg-indigo-50' : 'bg-white hover:bg-slate-50'}`}>
                                 <td className="p-3 text-center font-bold text-slate-500 border-r border-slate-100">{idx + 1}</td>
                                 <td className="p-3 border-r border-slate-100">
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setEditingRoundId(round.id);
-                                        }}
-                                        className={`w-full text-left px-2 py-1.5 rounded border flex justify-between items-center transition-colors 
-                                                ${hasConstraintConflict ? 'border-red-200 bg-red-50 text-red-500' :
-                                            !selectedItemName ? 'border-slate-200 bg-slate-50 text-slate-400' :
-                                                isAchievable ? 'border-indigo-200 bg-indigo-50/50 text-indigo-700' :
-                                                    'border-amber-200 bg-amber-50 text-amber-700'}`}
-                                    >
-                                        <div className="flex flex-col truncate">
-                                                <span className="font-bold truncate">
-                                                    {selectedItemName || (hasConstraintConflict ? "约束冲突 (无解)" : "点击选择...")}
-                                                </span>
-                                            {selectedItemName && !isAchievable && !hasConstraintConflict && (
-                                                <span className="text-[9px] opacity-80">无法购买，可任意操作</span>
-                                            )}
+                                    <div className="flex flex-col gap-1">
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const nextMode: DecisionMode = (decisionMode === 'BUY' ? 'NOT_BUY' : 'BUY');
+                                                    onUpdateRound({ ...round, decisionMode: nextMode });
+                                                }}
+                                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-full border transition-colors whitespace-nowrap ${decisionMode === 'BUY'
+                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                                                    : 'bg-slate-50 text-slate-600 border-slate-300 hover:bg-slate-100'}`}
+                                            >
+                                                {decisionMode === 'BUY' ? (
+                                                    <>
+                                                        <span>{decisionLabel}</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <span>{decisionLabel}</span>
+                                                    </>
+                                                )}
+                                            </button>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setEditingRoundId(round.id);
+                                                }}
+                                                className="flex-1 inline-flex items-center justify-between px-2.5 py-1.5 text-xs rounded border border-slate-300 bg-white hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
+                                            >
+                                                <div className="flex flex-col text-left min-w-0">
+                                                        <span className="font-bold text-slate-700 truncate">
+                                                            {itemDisplayLabel}
+                                                        </span>
+                                                </div>
+                                                <ChevronDown size={12} className="text-slate-400 ml-1 shrink-0"/>
+                                            </button>
                                         </div>
-                                        <Edit3 size={12} className="opacity-50 shrink-0 ml-1"/>
-                                    </button>
+                                        <div className="text-[10px] mt-0.5">
+                                            {hasConstraintConflict && (
+                                                <span
+                                                    className="inline-flex items-center px-1.5 py-0.5 rounded border border-red-100 bg-red-50 text-red-600 font-medium">
+                                                        约束冲突：本回合无任何可行解
+                                                    </span>
+                                            )}
+                                            {!hasConstraintConflict &&
+                                                selectedItemName &&
+                                                ((isEmptySelected && !emptyCanAchieve) ||
+                                                    (!isEmptySelected && !canBuySelected)) && (
+                                                    <span
+                                                        className="inline-flex items-center px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-700 font-medium">
+                                                        {isEmptySelected
+                                                            ? '当前配置下暂无“什么都不买”的对应操作'
+                                                            : '当前配置下无法通过本回合操作购买该物品'}
+                                                    </span>
+                                                )}
+                                        </div>
+                                    </div>
                                 </td>
                                 {slots.map((s, i) => (
                                     <td key={i}
@@ -978,10 +1329,9 @@ const SummaryTable = ({ rounds, slots, onUpdateRound }: {
                                             onUpdateRound({ ...round, selectedItemName: EMPTY_ITEM_LABEL });
                                             setEditingRoundId(null);
                                         }}
-                                        className={`p-3 rounded-lg border text-left flex justify-between items-center transition-all ${
-                                            isEmptySelected
-                                                ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500 z-10'
-                                                : 'hover:border-indigo-300 hover:bg-slate-50 border-slate-200 bg-white'
+                                        className={`p-3 rounded-lg border text-left flex justify-between items-center transition-all ${isEmptySelected
+                                            ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500 z-10'
+                                            : 'hover:border-indigo-300 hover:bg-slate-50 border-slate-200 bg-white'
                                         }`}
                                     >
                                         <div>
@@ -990,9 +1340,8 @@ const SummaryTable = ({ rounds, slots, onUpdateRound }: {
                                                 {EMPTY_ITEM_LABEL}
                                             </div>
                                             <div
-                                                className={`text-[10px] mt-1 inline-block px-1.5 py-0.5 rounded border border-transparent ${
-                                                    isEmptySelected ? 'bg-indigo-100 text-indigo-600' :
-                                                        hasEmptyOption ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-slate-100 text-slate-400'
+                                                className={`text-[10px] mt-1 inline-block px-1.5 py-0.5 rounded border border-transparent ${isEmptySelected ? 'bg-indigo-100 text-indigo-600' :
+                                                    hasEmptyOption ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-slate-100 text-slate-400'
                                                 }`}>
                                                 {hasEmptyOption ? '✓ 可达成' : '不可达成'}
                                             </div>
