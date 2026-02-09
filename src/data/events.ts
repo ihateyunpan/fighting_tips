@@ -10,6 +10,7 @@ export interface EventMeta {
 export const EVENTS = {
     HUI_XIANG_LU: { id: '1', name: '回乡路', active: true },
     DUNGEON_19: { id: '2', name: '十九期地宫', active: true },
+    AGENT: { id: '999', name: '密探', active: true },
 } as const;
 
 // 导出类型，方便在 levels.ts 里引用 key

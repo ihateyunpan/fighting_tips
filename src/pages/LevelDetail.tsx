@@ -35,10 +35,10 @@ export default function LevelDetail() {
                     <div className="px-8 py-8 border-b border-gray-100">
                         <div className="flex items-center justify-between gap-4 mb-2"> {/* 修改: justify-between */}
                             <div className="flex items-baseline gap-4">
-                                 <span
-                                     className="px-2.5 py-0.5 rounded text-sm font-semibold bg-indigo-100 text-indigo-700">
-                                    {levelData.level || 'SP'}
-                                 </span>
+                                {levelData.level && (<span
+                                    className="px-2.5 py-0.5 rounded text-sm font-semibold bg-indigo-100 text-indigo-700">
+                                {levelData.level}
+                            </span>)}
                                 <h1 className="text-3xl font-bold text-gray-900 tracking-tight">{levelData.name}</h1>
                             </div>
 

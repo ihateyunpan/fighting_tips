@@ -1259,7 +1259,7 @@ const SummaryTable = ({ rounds, slots, onUpdateRound }: {
                                                     </span>
                                             )}
                                             {!hasConstraintConflict &&
-                                                selectedItemName &&
+                                                selectedItemName && (decisionMode === 'BUY') &&
                                                 ((isEmptySelected && !emptyCanAchieve) ||
                                                     (!isEmptySelected && !canBuySelected)) && (
                                                     <span
