@@ -547,6 +547,7 @@ export default function FaZhengHelper() {
                 <div className="relative">
                     <div className="flex justify-between items-end mb-1 px-1">
                         <h3 className="text-xs font-bold text-slate-700">持有 ({state.buffer.length}/3)</h3>
+                        <p className="text-[10px] text-slate-400 mb-1 px-1">点击卡片可查看圣物详情</p>
                         <button onClick={() => setState(prev => ({ ...prev, buffer: [] }))}
                                 className="text-[10px] text-slate-400 hover:text-red-500 flex items-center gap-1">
                             <Trash2 size={10}/> 清空

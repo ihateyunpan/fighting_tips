@@ -1113,17 +1113,12 @@ const SummaryTable = ({ rounds, slots, onUpdateRound }: {
         if (selectedItemName === EMPTY_ITEM_LABEL) {
             ({ solution: displaySolution, isAchievable } = getActionForEmptyItem(solutions));
         } else if (targetPrice !== null) {
-            if (decisionMode === 'BUY') {
-                if (solutions[targetPrice]) {
-                    displaySolution = solutions[targetPrice];
-                    isAchievable = true;
-                } else {
-                    const allPaths = Object.values(solutions);
-                    if (allPaths.length > 0) displaySolution = allPaths[0];
-                    isAchievable = false;
-                }
+            if (decisionMode === 'BUY' && solutions[targetPrice]) {
+                // 如果决定要买，并且有可以买到的操作，那就选择
+                displaySolution = solutions[targetPrice];
+                isAchievable = true;
             } else {
-                // NOT_BUY：从所有金币 != 目标金额的解中，选一条匹配度最高的
+                // NOT_BUY，或者BUY但买不到：从所有金币 != 目标金额的解中，选一条匹配度最高的
                 let bestPath: ActionItem[] | null = null;
                 let bestScore = -Infinity;
                 Object.entries(solutions).forEach(([goldStr, path]) => {

@@ -108,8 +108,8 @@ const RELICS: RelicDef[] = [
     },
     {
         id: 'r12', name: '黄帝的内经', grade: 'RED', badges: [
-            { text: "攻击↑", color: 'RED' },
-            { text: "阴增伤↑", color: 'RED' },
+            { text: "攻击↑", color: 'GOLD' },
+            { text: "阴增伤↑", color: 'GOLD' },
             { text: "⚠️普攻免伤↓", color: 'GREY' },
             { text: "⚠️技能免伤↓", color: 'GREY' },
         ], desc: '提升我方全员50%攻击力和50阴属性增伤（3回合），我方全员的普攻免伤和技能免伤降低50（2回合）'
