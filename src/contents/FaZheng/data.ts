@@ -38,7 +38,7 @@ const GRADES: Record<Grade, { color: string; bg: string; border: string; refund:
 const RELICS: RelicDef[] = [
     {
         id: 'r1', name: '乐毅的马鞭', grade: 'BLUE', badges: [
-            { text: "技能攻击x1", color: "BLUE" },
+            { text: "单体技攻x1", color: "BLUE" },
         ], desc: '对当前目标造成100%攻击力的技能伤害'
     },
     {
@@ -48,8 +48,8 @@ const RELICS: RelicDef[] = [
     },
     {
         id: 'r3', name: '管仲的护膝', grade: 'BLUE', badges: [
-            { text: "攻击↑", color: "BLUE" },
-            { text: "技能攻击x1", color: "BLUE" },
+            { text: "我方攻击↑", color: "BLUE" },
+            { text: "群体技攻x1", color: "BLUE" },
         ], desc: '提升我方全员10%攻击力（1回合，可叠加），对敌方全体造成30%攻击力的技能伤害'
     },
     {
@@ -57,37 +57,37 @@ const RELICS: RelicDef[] = [
         name: '霍去病的眼镜',
         grade: 'PURPLE',
         badges: [
-            { text: "技能攻击x2", color: "BLUE" },
+            { text: "单体技攻x2", color: "BLUE" },
         ],
         desc: '对当前目标造成两次150%攻击力的技能伤害'
     },
     {
         id: 'r5', name: '黄石公的鞋拔子', grade: 'PURPLE', badges: [
-            { text: "技能攻击x1", color: "BLUE" },
+            { text: "群体技攻x1", color: "BLUE" },
             { text: "敌全攻击↓", color: "PURPLE" },
             { text: "敌全免伤↓", color: "PURPLE" },
         ], desc: '对敌方全体造成120%攻击力的技能伤害，降低敌方全体20%攻击力和20免伤值（2回合）'
     },
     {
         id: 'r6', name: '卫青的钓竿', grade: 'PURPLE', badges: [
-            { text: "攻击↑", color: "PURPLE" },
-            { text: "生命上限↑", color: "PURPLE" },
+            { text: "我方攻击↑", color: "PURPLE" },
+            { text: "我方生命上限↑", color: "PURPLE" },
         ], desc: '提升我方全体20%攻击力和20%最大生命'
     },
     {
         id: 'r7', name: '始皇的按摩梳', grade: 'GOLD', badges: [
-            { text: "技能攻击x3", color: "PURPLE" },
+            { text: "单体技攻x3", color: "PURPLE" },
         ], desc: '对当前目标造成三次200%攻击力的技能伤害'
     },
     {
         id: 'r8', name: '高祖的文凭', grade: 'GOLD', badges: [
-            { text: "技能攻击x1", color: "PURPLE" },
+            { text: "单体技攻x1", color: "PURPLE" },
             { text: "每次技伤敌技能免伤↓", color: "PURPLE" },
         ], desc: '为当前目标附加【虚证】（3回合），随后对其造成300%攻击力的技能伤害。【虚证】：受到技能伤害时，技能免伤降低5（3回合，可叠加20层）'
     },
     {
         id: 'r9', name: '文帝的遮阳伞', grade: 'GOLD', badges: [
-            { text: "阴增伤↑", color: "GOLD" }
+            { text: "我方阴增伤↑", color: "GOLD" }
         ], desc: '提升我方全体30阴属性增伤和30技能增伤（3回合）'
     },
     {
@@ -102,14 +102,14 @@ const RELICS: RelicDef[] = [
     },
     {
         id: 'r11', name: '炎帝的锄头', grade: 'RED', badges: [
-            { text: '单体技能攻击x4', color: 'GOLD' },
+            { text: '单体技攻x4', color: 'GOLD' },
             { text: '⚠️混乱自身', color: 'GREY' },
         ], desc: '对当前目标造成4次400%攻击力的技能伤害，随后使自身【混乱】（2回合）。【混乱】：无法行动'
     },
     {
         id: 'r12', name: '黄帝的内经', grade: 'RED', badges: [
-            { text: "攻击↑", color: 'GOLD' },
-            { text: "阴增伤↑", color: 'GOLD' },
+            { text: "我方攻击↑", color: 'GOLD' },
+            { text: "我方阴增伤↑", color: 'GOLD' },
             { text: "⚠️普攻免伤↓", color: 'GREY' },
             { text: "⚠️技能免伤↓", color: 'GREY' },
         ], desc: '提升我方全员50%攻击力和50阴属性增伤（3回合），我方全员的普攻免伤和技能免伤降低50（2回合）'
@@ -132,7 +132,7 @@ const COMBOS: ComboDef[] = [
         id: 'c2',
         relicIds: ['r2', 'r10'],
         badges: [
-            { text: '每回合回血', color: 'GOLD' },
+            { text: '每回合法正回血', color: 'GOLD' },
         ],
         desc: '本场战斗中，回合开始时，恢复自身生命，恢复量为自身100%的攻击力'
     },
@@ -140,7 +140,7 @@ const COMBOS: ComboDef[] = [
         id: 'c3',
         relicIds: ['r4', 'r7'],
         badges: [
-            { text: '法正技能攻击x2', color: 'GOLD' },
+            { text: '群体技攻x2', color: 'GOLD' },
         ],
         desc: '对敌方全体造成2次1000%攻击力的技能伤害'
     },
@@ -178,9 +178,9 @@ const COMBOS: ComboDef[] = [
         relicIds: ['r8', 'r13'],
         badges: [
             { text: '群体回血', color: 'RED' },
-            { text: '敌攻击↓', color: 'PURPLE' },
-            { text: '敌普攻增伤↓', color: 'PURPLE' },
-            { text: '敌技能增伤↓', color: 'PURPLE' },
+            { text: '敌全攻击↓', color: 'PURPLE' },
+            { text: '敌全普攻增伤↓', color: 'PURPLE' },
+            { text: '敌全技能增伤↓', color: 'PURPLE' },
         ],
         desc: '恢复我方全员50%最大生命。所有敌人的攻击力降低20%，普攻增伤和技能增伤降低20'
     },
@@ -192,7 +192,7 @@ const COMBOS: ComboDef[] = [
             { text: '法正攻击↑', color: 'RED' },
             { text: '法正生命上限↑', color: 'RED' },
             { text: '免疫混乱', color: 'RED' },
-            { text: '每回合技能攻击x1', color: 'RED' },
+            { text: '每回合群体技攻x1', color: 'RED' },
             { text: '⚠️每回合法正-10%血', color: 'GREY' },
         ],
         desc: '恢复自身50%最大生命。本场战斗中，自身攻击力提升200%，最大生命提升200%，免疫【混乱】效果。回合开始时，失去10%当前生命，对敌方全体造成500%攻击力的技能伤害'
