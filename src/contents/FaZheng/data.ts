@@ -82,7 +82,7 @@ const RELICS: RelicDef[] = [
     {
         id: 'r8', name: '高祖的文凭', grade: 'GOLD', badges: [
             { text: "单体技攻x1", color: "PURPLE" },
-            { text: "每次技伤敌技能免伤↓", color: "PURPLE" },
+            { text: "每次技伤敌单技能免伤↓", color: "PURPLE" },
         ], desc: '为当前目标附加【虚证】（3回合），随后对其造成300%攻击力的技能伤害。【虚证】：受到技能伤害时，技能免伤降低5（3回合，可叠加20层）'
     },
     {
@@ -119,7 +119,7 @@ const RELICS: RelicDef[] = [
         name: '蚩尤的坐骑',
         grade: 'RED',
         badges: [
-            { text: "每次技伤敌-2%血", color: "RED" },
+            { text: "每次技伤敌单-2%血", color: "RED" },
             { text: "⚠️法正-80%血", color: "GREY" },
         ],
         desc: '为当前目标附加【踏破】（3回合），对其造成500%攻击力的技能伤害，自身失去80%当前生命。【踏破】：每次受到技能伤害，失去2%当前生命'
@@ -159,7 +159,7 @@ const COMBOS: ComboDef[] = [
         badges: [
             { text: '解除混乱', color: 'RED' },
             { text: '法正技能增伤↑', color: 'GOLD' },
-            { text: '法正行动后技能攻击x1', color: 'GOLD' },
+            { text: '法正行动后群体技攻x1', color: 'GOLD' },
         ],
         desc: '解除自身的【混乱】效果。本场战斗中，自身技能增伤提升40，并且每次行动后，对敌方全体造成100%攻击力的技能伤害'
     },
