@@ -8,8 +8,9 @@ export interface EventMeta {
 
 // 使用 Record 定义类似 Enum 的常量对象
 export const EVENTS = {
-    HUI_XIANG_LU: { id: '1', name: '回乡路', active: true },
-    DUNGEON_19: { id: '2', name: '十九期地宫', active: true },
+    HUI_XIANG_LU: { id: '1', name: '回乡路', active: false },
+    DUNGEON_19: { id: '2', name: '十九期地宫', active: false },
+    KPI: { id: '3', name: '夜以继日的绩效考核', active: true },
     AGENT: { id: '999', name: '密探', active: true },
 } as const;
 
