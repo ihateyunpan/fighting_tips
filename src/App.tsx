@@ -1,12 +1,15 @@
 /* src/App.tsx */
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Route, Routes } from 'react-router-dom';
 import Navbar from './components/NavBar';
 import Home from './pages/Home';
 import LevelDetail from './pages/LevelDetail';
 
+/** file:// 打开本地产物时路径不是 "/"，需用 HashRouter（仅 localfile 构建） */
+const Router = import.meta.env.MODE === 'localfile' ? HashRouter : BrowserRouter;
+
 function App() {
     return (
-        <BrowserRouter>
+        <Router>
             <div className="min-h-screen flex flex-col">
                 {/* 导航栏 */}
                 <Navbar/>
@@ -25,7 +28,7 @@ function App() {
                     </Routes>
                 </main>
             </div>
-        </BrowserRouter>
+        </Router>
     );
 }
 

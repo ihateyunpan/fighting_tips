@@ -386,12 +386,11 @@ export default function ZhuGeLiang() {
                                 role="note"
                             >
                                 <p className="text-sm sm:text-base leading-relaxed text-slate-700 text-center sm:text-left">
-                                    <span className="mr-1.5 text-indigo-500" aria-hidden>
-                                        ⏱
+                                    <span className="block">⏱ 操作完毕后，触发<span className="font-semibold text-indigo-800 tabular-nums">20</span>秒倒计时</span>
+                                    <span className="block mt-2 text-xs sm:text-sm text-slate-500 leading-normal">
+                                        ⚠️在此期间可以：①奶无限次行动奶人，②dot无限次行动叠层，③乐器密探无限次行动叠正音……
                                     </span>
-                                    操作完毕后，等<span className="font-semibold text-indigo-800 tabular-nums">20</span>
-                                    秒，直到诸葛亮身上有<span className="font-semibold text-yellow-500 tabular-nums">黄色时钟</span>
-                                    ，再输出诸葛亮
+                                    <span className="block mt-2">直到诸葛亮身上有<span className="font-semibold text-yellow-500 tabular-nums">黄色时钟</span>，再正常输出诸葛亮</span>
                                 </p>
                             </div>
                         </div>
