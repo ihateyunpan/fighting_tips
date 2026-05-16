@@ -7,7 +7,8 @@ import { ClipboardCopy, ClipboardPaste, Download, FileDown, FileUp, Upload, X } 
 const YiZhanGuanTou = lazy(() => import('./YiZhanGuanTou'));
 const Relic19_4 = lazy(() => import('./Relic19_4'))
 const FaZheng = lazy(() => import('./FaZheng'))
-const KpiZhuGeLiang = lazy(() => import('./Kpi/ZhuGeLiang'));
+const KpiZhuGeLiang = lazy(() => import('./Kpi/ZhuGeLiang/ZhuGeLiang.tsx'));
+const KpiXunYou = lazy(() => import('./Kpi/XunYou'));
 
 // 404 组件
 const NotFound = () => (
@@ -24,6 +25,7 @@ const contentMap: Record<string, LazyComponent> = {
     '1': YiZhanGuanTou,
     '2': Relic19_4,
     '3': KpiZhuGeLiang,
+    '4': KpiXunYou,
     '999': FaZheng,
 };
 

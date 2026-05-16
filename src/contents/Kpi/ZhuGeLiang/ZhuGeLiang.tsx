@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { COLOR_ID_TO_CHAR, resolveZhuGeLabels, type ZhuGeColorId } from './zhugeResolve';
+import { COLOR_ID_TO_CHAR, resolveZhuGeLabels, type ZhuGeColorId } from './zhugeResolve.ts';
 
 const STORAGE_KEY = 'zhuge-kpi-v1';
 
