@@ -18,7 +18,7 @@ const NotFound = () => (
 );
 
 // 类型定义
-type LazyComponent = LazyExoticComponent<ComponentType<any>> | ComponentType<any>;
+type LazyComponent = LazyExoticComponent<ComponentType<unknown>> | ComponentType<unknown>;
 
 // 路由映射表
 const contentMap: Record<string, LazyComponent> = {
@@ -80,7 +80,7 @@ export function LevelToolBar() {
             try {
                 actions.onImport?.(content);
                 setModalType(null);
-            } catch (e) {
+            } catch {
                 alert("导入失败：文件格式错误");
             }
             if (fileInputRef.current) fileInputRef.current.value = '';
@@ -98,7 +98,7 @@ export function LevelToolBar() {
             }
             actions.onImport(text);
             setModalType(null);
-        } catch (err) {
+        } catch {
             alert("无法读取剪贴板，请尝试使用文件导入");
         }
     };

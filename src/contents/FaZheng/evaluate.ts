@@ -6,9 +6,24 @@ import {
     Sparkles,
     Swords,
     TrendingUp,
-    Zap
+    Zap,
+    type LucideIcon
 } from 'lucide-react';
 import { COMBOS, GRADES, RELICS } from './data';
+
+export interface FaZhengGameState {
+    gold: number;
+    buffer: string[];
+    drawCount: number;
+    round: number;
+    config: {
+        xianYu: boolean;
+        firstDraw: boolean;
+        stars: '1' | '2+';
+    };
+}
+
+type RelicDef = (typeof RELICS)[number];
 
 // --- 1. 评分系统配置 ---
 
@@ -80,7 +95,7 @@ export interface UIRecommendation {
     title: string;
     reason: string;
     style: 'green' | 'amber' | 'blue' | 'rose';
-    Icon: any;
+    Icon: LucideIcon;
 }
 
 function evaluateBuffer(buffer: string[]) {
@@ -138,7 +153,7 @@ function evaluateBuffer(buffer: string[]) {
     return { score, activeComboIds, hasHoe, hasComb, hasLongTermBuff, hasGodTrio };
 }
 
-export function getFaZhengRecommendation(gameState: any): UIRecommendation {
+export function getFaZhengRecommendation(gameState: FaZhengGameState): UIRecommendation {
     const { gold, buffer, drawCount, config } = gameState;
 
     // 1. 资金计算 (严格执行下回合2抽策略)
@@ -155,9 +170,9 @@ export function getFaZhengRecommendation(gameState: any): UIRecommendation {
 
     // 咸鱼回血计算
     let refund = 0;
-    let oldestRelic: any = null;
+    let oldestRelic: RelicDef | null = null;
     if (buffer.length > 0) {
-        oldestRelic = RELICS.find(r => r.id === buffer[0]);
+        oldestRelic = RELICS.find(r => r.id === buffer[0]) ?? null;
     }
     if (buffer.length === 3 && config.xianYu && oldestRelic) {
         refund = GRADES[oldestRelic.grade as import('./data').Grade].refund;

@@ -1,49 +1,26 @@
-import { ArrowRightLeft, ChevronDown, ChevronRight, Copy, Plus, RotateCcw, Settings2, Trash2, X } from 'lucide-react';
+import { ArrowRightLeft, ChevronDown, ChevronRight, Copy, Plus, RotateCcw, Settings2, Trash2 } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLevelToolbar } from '../../../components/LevelContext';
+import {
+    type ActionItem,
+    type ActionSlot,
+    type ActionType,
+    canPlaceActionInPath,
+    type ElementType,
+    evaluateGroupMatch,
+    evaluateOperationMatch,
+    getActionLabel,
+    normalizeOperationRequirementData,
+    type OperationRequirementData,
+    OperationRequirementPanel,
+    type OperationSequence,
+    toOperationSequence
+} from '../../../components/OperationRequirementPanel';
 
 // --- 类型定义（荀攸考核） ---
-type ElementType = '地' | '水' | '火' | '风' | '阴' | '阳' | '混沌';
 type CoreElement = '地' | '水' | '火' | '风';
 type PermChar = CoreElement | '空';
 type ColorChoice = CoreElement | '空白';
-type ActionType = 'A' | '↑' | '↓' | '圈';
-type ConstraintType = 'NONE' | 'FIXED' | 'RELATIVE' | 'IMMEDIATE';
-type RelativeType = 'BEFORE' | 'AFTER';
-type FixedOperator = 'AT' | 'BEFORE' | 'AFTER';
-type PreferenceType = 'FIXED' | 'RELATIVE' | 'EARLY' | 'LATE';
-
-// [新增] 软偏好规则
-interface PreferenceRule {
-    id: string;
-    type: PreferenceType;
-    // Fixed 参数
-    fixedIndex?: number;
-    fixedOperator?: FixedOperator;
-    // Relative 参数
-    targetId?: string;
-    relativeType?: RelativeType;
-}
-
-interface RelativeRule {
-    id: string;
-    type: RelativeType;
-    targetId: string;
-}
-
-interface ActionItem {
-    id: string;
-    types: ActionType[];
-    slotIndex: number;
-    // --- 硬性约束 ---
-    constraint: ConstraintType;
-    fixedIndex?: number;
-    fixedOperator?: FixedOperator;
-    relativeRules: RelativeRule[]; // 这里复用了 RelativeRule 结构，但在硬约束里只用作 RELATIVE
-    immediateTargetId?: string;
-    // --- [新增] 软性偏好 ---
-    preferences: PreferenceRule[];
-}
 
 interface HitRecord {
     skillEnabled: boolean;
@@ -53,7 +30,9 @@ interface HitRecord {
 interface Round {
     id: string;
     name?: string;
-    actions: ActionItem[];
+    /** @deprecated 旧版单操作组数据，导入时自动迁移到 operationRequirements */
+    actions?: ActionItem[];
+    operationRequirements?: OperationRequirementData;
     isCollapsed?: boolean;
     requireAdjacentDifferent?: boolean;
     requireAttributeOrder?: boolean;
@@ -61,24 +40,15 @@ interface Round {
     currentColors: ColorChoice[];
 }
 
-interface Slot {
-    index: number;
-    element: ElementType;
-}
-
-interface ResolvedPath {
-    path: ActionItem[];
-    resolvedTypes: Map<string, ActionType>;
-}
+type Slot = ActionSlot;
 
 interface PlanRow {
     orderKey: string;
     order: PermChar[];
-    solution: ResolvedPath | null;
+    solution: OperationSequence | null;
 }
 
-const BASIC_ACTION_TYPES = ['A', '↑', '↓'] as const;
-type BasicActionType = (typeof BASIC_ACTION_TYPES)[number];
+type BasicActionType = 'A' | '↑' | '↓';
 
 const isCircleAction = (action: ActionItem) => action.types.includes('圈');
 
@@ -145,27 +115,8 @@ function useStickyState<T>(defaultValue: T, key: string): [T, React.Dispatch<Rea
 
 // --- Helper Functions ---
 const generateId = () => Math.random().toString(36).substr(2, 9);
-const getDisplayId = (targetId: string, currentActions: ActionItem[]) => {
-    const target = currentActions.find(a => a.id === targetId);
-    if (!target) return '??';
-    const slotOps = currentActions.filter(a => a.slotIndex === target.slotIndex);
-    const index = slotOps.findIndex(a => a.id === targetId);
-    return `${target.slotIndex + 1}${String.fromCharCode(97 + index)}`;
-};// [新增] 获取显示的标签
-const getActionLabel = (types: ActionType[]) => {
-    if (types.includes('圈')) return '圈';
-    // 检查是否包含 A, ↑, ↓ (即默认的“任意”)
-    const resorted: string[] = [];
-    const hasA = types.includes('A');
-    const hasUp = types.includes('↑');
-    const hasDown = types.includes('↓');
-    if (hasA && hasUp && hasDown) return '任意';
-    if (hasA) resorted.push('A');
-    if (hasUp) resorted.push('↑');
-    if (hasDown) resorted.push('↓');
-    return resorted.join('/');
-};
-const getSlotContent = (resolved: ResolvedPath | null) => {
+
+const getSlotContent = (resolved: OperationSequence | null) => {
     const slotContents: string[] = Array(5).fill('');
     if (!resolved) return slotContents;
 
@@ -332,12 +283,16 @@ const hasAllCoreElements = (slots: Slot[]) =>
 const createDefaultRound = (index: number): Round => ({
     id: generateId(),
     name: defaultRoundName(index),
+    operationRequirements: { groups: [] },
     actions: [],
     requireAdjacentDifferent: true,
     requireAttributeOrder: true,
     hitRecord: { skillEnabled: false, hitOrder: [null, null, null, null, null] },
     currentColors: [...DEFAULT_CURRENT_COLORS]
 });
+
+const getRoundOperationRequirements = (round: Round): OperationRequirementData =>
+    normalizeOperationRequirementData(round.operationRequirements, round.actions);
 
 const copyToClipboard = (rows: string[][]) => {
     const text = rows.map(row => row.join('\t')).join('\n');
@@ -349,90 +304,16 @@ const copyToClipboard = (rows: string[][]) => {
     });
 };
 
-// --- 核心算法 ---
-const buildDependencies = (actions: ActionItem[]) => {
-    const dependencies = new Map<string, Set<string>>();
-    const idToAction = new Map<string, ActionItem>();
-    actions.forEach(a => {
-        idToAction.set(a.id, a);
-        if (!dependencies.has(a.id)) dependencies.set(a.id, new Set());
-    });
-    const slotsMap = new Map<number, ActionItem[]>();
-    actions.forEach(a => {
-        if (!slotsMap.has(a.slotIndex)) slotsMap.set(a.slotIndex, []);
-        slotsMap.get(a.slotIndex)!.push(a);
-    });
-    slotsMap.forEach(group => {
-        for (let i = 1; i < group.length; i++) {
-            dependencies.get(group[i].id)!.add(group[i - 1].id);
-        }
-    });
-    actions.forEach(a => {
-        if (a.constraint === 'IMMEDIATE' && a.immediateTargetId && idToAction.has(a.immediateTargetId)) {
-            dependencies.get(a.id)!.add(a.immediateTargetId);
-        }
-        if (a.constraint === 'RELATIVE') {
-            a.relativeRules.forEach(rule => {
-                if (!rule.targetId || !idToAction.has(rule.targetId)) return;
-                if (rule.type === 'AFTER') dependencies.get(a.id)!.add(rule.targetId);
-                else if (rule.type === 'BEFORE' && dependencies.has(rule.targetId)) dependencies.get(rule.targetId)!.add(a.id);
-            });
-        }
-    });
-    return { dependencies };
-};
+// --- 核心算法（1.1 相邻约束；1.3 操作要求由 operationMatch 判定） ---
+const solveGroupPaths = (
+    groupActions: ActionItem[],
+    requireAdjacentDifferent: boolean
+): OperationSequence[] => {
+    if (groupActions.length < 5) return [];
 
-// 计算路径的偏好得分
-const calculatePreferenceScore = (path: ActionItem[]) => {
-    let score = 0;
-    const pathIds = path.map(a => a.id);
-
-    path.forEach((action, currentIndex) => {
-        // 计算 effectiveIndex (排除圈)
-        // 注意：软偏好里的 "第X个" 通常指有效操作的序数
-        const effectiveSequence = path.slice(0, currentIndex + 1).filter(a => !a.types.includes('圈'));
-        const currentEffectiveIndex = effectiveSequence.length; // 1-based
-
-        (action.preferences || []).forEach(pref => {
-            let met = false;
-            switch (pref.type) {
-                case 'EARLY':
-                    // 越靠前分越高 (简单线性)
-                    score += (10 - currentIndex);
-                    break;
-                case 'LATE':
-                    // 越靠后分越高
-                    score += currentIndex;
-                    break;
-                case 'FIXED': {
-                    const targetIdx = pref.fixedIndex || 1;
-                    const op = pref.fixedOperator || 'AT';
-                    if (action.types.includes('圈')) break; // 圈不参与 Fixed 计数
-                    if (op === 'AT' && currentEffectiveIndex === targetIdx) met = true;
-                    else if (op === 'BEFORE' && currentEffectiveIndex < targetIdx) met = true;
-                    else if (op === 'AFTER' && currentEffectiveIndex > targetIdx) met = true;
-                    break;
-                }
-                case 'RELATIVE': {
-                    if (!pref.targetId) break;
-                    const targetPos = pathIds.indexOf(pref.targetId);
-                    if (targetPos === -1) break; // 目标不在路径中(不太可能，除非是圈被过滤逻辑影响，暂时按物理路径算)
-                    if (pref.relativeType === 'BEFORE' && currentIndex < targetPos) met = true;
-                    if (pref.relativeType === 'AFTER' && currentIndex > targetPos) met = true;
-                    break;
-                }
-            }
-            if (met) score += 100; // 满足一个具体规则加 100 分
-        });
-    });
-    return score;
-};
-
-const solveAllPaths = (actions: ActionItem[], requireAdjacentDifferent = true) => {
-    if (actions.length < 5) return { paths: [] as ResolvedPath[], error: '需5个操作' };
-    const { dependencies } = buildDependencies(actions);
-    const allPaths: ResolvedPath[] = [];
-    const totalSteps = actions.length;
+    const allPaths: OperationSequence[] = [];
+    const totalSteps = groupActions.length;
+    const stubGroup = { id: '', actions: groupActions };
 
     const dfs = (
         path: ActionItem[],
@@ -440,54 +321,31 @@ const solveAllPaths = (actions: ActionItem[], requireAdjacentDifferent = true) =
         used: Set<string>
     ) => {
         if (path.length === totalSteps) {
-            allPaths.push({ path: [...path], resolvedTypes: new Map(resolvedTypes) });
+            const sequence = toOperationSequence(path, resolvedTypes);
+            if (evaluateGroupMatch(stubGroup, sequence).hardMet) {
+                allPaths.push(sequence);
+            }
             return;
         }
 
-        const effectiveCountSoFar = path.filter(a => !isCircleAction(a)).length;
         const prevNonCircleType = getPrevNonCircleType(path, resolvedTypes);
 
-        for (const action of actions) {
+        for (const action of groupActions) {
             if (used.has(action.id)) continue;
-
-            const isCircle = isCircleAction(action);
-            const nextEffectiveIndex = effectiveCountSoFar + (isCircle ? 0 : 1);
-
-            if (action.constraint === 'FIXED') {
-                if (isCircle) continue;
-                const targetIndex = action.fixedIndex || 1;
-                const op = action.fixedOperator || 'AT';
-                if (op === 'AT' && nextEffectiveIndex !== targetIndex) continue;
-                if (op === 'BEFORE' && !(nextEffectiveIndex < targetIndex)) continue;
-                if (op === 'AFTER' && !(nextEffectiveIndex > targetIndex)) continue;
-            }
-            if (action.constraint === 'IMMEDIATE') {
-                if (path.length === 0) continue;
-                const prevAction = path[path.length - 1];
-                if (prevAction.id !== action.immediateTargetId) continue;
-            }
-            const parents = dependencies.get(action.id);
-            let parentsSatisfied = true;
-            if (parents && parents.size > 0) {
-                for (const pid of parents) {
-                    if (!used.has(pid)) {
-                        parentsSatisfied = false;
-                        break;
-                    }
-                }
-            }
-            if (!parentsSatisfied) continue;
+            if (!canPlaceActionInPath(path, action, groupActions)) continue;
 
             used.add(action.id);
             path.push(action);
 
-            if (isCircle) {
+            if (isCircleAction(action)) {
                 resolvedTypes.set(action.id, '圈');
                 dfs(path, resolvedTypes, used);
                 resolvedTypes.delete(action.id);
             } else {
                 for (const type of getBasicTypes(action)) {
-                    if (requireAdjacentDifferent && prevNonCircleType !== null && type === prevNonCircleType) continue;
+                    if (requireAdjacentDifferent && prevNonCircleType !== null && type === prevNonCircleType) {
+                        continue;
+                    }
                     resolvedTypes.set(action.id, type);
                     dfs(path, resolvedTypes, used);
                     resolvedTypes.delete(action.id);
@@ -500,6 +358,22 @@ const solveAllPaths = (actions: ActionItem[], requireAdjacentDifferent = true) =
     };
 
     dfs([], new Map(), new Set());
+    return allPaths;
+};
+
+const solveOperationPaths = (
+    operationData: OperationRequirementData,
+    requireAdjacentDifferent = true
+): { paths: OperationSequence[]; error: string | null } => {
+    if (operationData.groups.length === 0) {
+        return { paths: [], error: '需5个操作' };
+    }
+
+    const allPaths: OperationSequence[] = [];
+    for (const group of operationData.groups) {
+        allPaths.push(...solveGroupPaths(group.actions, requireAdjacentDifferent));
+    }
+
     return {
         paths: allPaths,
         error: allPaths.length === 0 ? '无解 (冲突)' : null
@@ -507,7 +381,8 @@ const solveAllPaths = (actions: ActionItem[], requireAdjacentDifferent = true) =
 };
 
 const buildPlanRows = (
-    paths: ResolvedPath[],
+    paths: OperationSequence[],
+    operationRequirements: OperationRequirementData,
     slots: Slot[],
     useFive: boolean,
     requireAttributeOrder = true
@@ -518,10 +393,11 @@ const buildPlanRows = (
         const matching = requireAttributeOrder
             ? paths.filter(p => pathMatchesAttributeOrder(p.path, slots, order))
             : paths;
-        let solution: ResolvedPath | null = null;
+        let solution: OperationSequence | null = null;
         if (matching.length > 0) {
             solution = matching.reduce((best, cur) =>
-                calculatePreferenceScore(cur.path) > calculatePreferenceScore(best.path) ? cur : best
+                evaluateOperationMatch(operationRequirements, cur).softScore >
+                evaluateOperationMatch(operationRequirements, best).softScore ? cur : best
             );
         }
         return { orderKey, order, solution };
@@ -566,11 +442,11 @@ const ElementSelector = ({ current, onChange }: { current: ElementType; onChange
 const ROUND_PANEL_LABEL_CLASS = 'text-xs font-bold text-slate-500 w-36 shrink-0 whitespace-nowrap';
 
 const ConstraintToggleButton = ({
-    label,
-    active,
-    onClick,
-    title
-}: {
+                                    label,
+                                    active,
+                                    onClick,
+                                    title
+                                }: {
     label: string;
     active: boolean;
     onClick: () => void;
@@ -598,9 +474,9 @@ const PrevRoundLabel = ({ children }: { children: React.ReactNode }) => (
 );
 
 const ColorDropdownButton = ({
-    color,
-    onSelect
-}: {
+                                 color,
+                                 onSelect
+                             }: {
     color: ColorChoice;
     onSelect: (c: ColorChoice) => void;
 }) => {
@@ -623,7 +499,8 @@ const ColorDropdownButton = ({
                 {colorChoiceLabel(color)}
             </button>
             {open && (
-                <div className="absolute top-full left-0 mt-1 z-40 w-full bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden p-1 flex flex-col gap-0.5">
+                <div
+                    className="absolute top-full left-0 mt-1 z-40 w-full bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden p-1 flex flex-col gap-0.5">
                     {COLOR_CHOICES.map(choice => (
                         <button
                             key={choice}
@@ -644,11 +521,11 @@ const ColorDropdownButton = ({
 };
 
 const RoundColorPanel = ({
-    hitRecord,
-    currentColors,
-    onHitRecordChange,
-    onColorsChange
-}: {
+                             hitRecord,
+                             currentColors,
+                             onHitRecordChange,
+                             onColorsChange
+                         }: {
     hitRecord: HitRecord;
     currentColors: ColorChoice[];
     onHitRecordChange: (hr: HitRecord) => void;
@@ -723,7 +600,7 @@ const RoundColorPanel = ({
                         className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 rounded"
                         title="重置"
                     >
-                        <RotateCcw size={16} />
+                        <RotateCcw size={16}/>
                     </button>
                 </div>
                 {hitOrderWarning && (
@@ -893,15 +770,15 @@ const ActionPlanTable = ({
 };
 
 const RoundComponent = ({
-    round,
-    slots,
-    index,
-    onUpdate,
-    onToggleCollapse,
-    onDelete,
-    onClone,
-    contentRef
-}: {
+                            round,
+                            slots,
+                            index,
+                            onUpdate,
+                            onToggleCollapse,
+                            onDelete,
+                            onClone,
+                            contentRef
+                        }: {
     round: Round;
     slots: Slot[];
     index: number;
@@ -911,8 +788,6 @@ const RoundComponent = ({
     onClone: () => void;
     contentRef?: (el: HTMLDivElement | null) => void;
 }) => {
-    const [editingId, setEditingId] = useState<string | null>(null);
-    const [swapSourceId, setSwapSourceId] = useState<string | null>(null);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [titleDraft, setTitleDraft] = useState('');
     const titleInputRef = useRef<HTMLInputElement>(null);
@@ -923,14 +798,22 @@ const RoundComponent = ({
     const useFive = hitRecord.skillEnabled;
     const requireAdjacentDifferent = round.requireAdjacentDifferent ?? true;
     const requireAttributeOrder = round.requireAttributeOrder ?? true;
+    const operationRequirements = useMemo(
+        () => getRoundOperationRequirements(round),
+        [round]
+    );
+    const slotBorderClasses = useMemo(
+        () => Object.fromEntries(slots.map(s => [s.index, ELEMENTS[s.element].border])),
+        [slots]
+    );
 
     const { paths, error } = useMemo(
-        () => solveAllPaths(round.actions, requireAdjacentDifferent),
-        [round.actions, requireAdjacentDifferent]
+        () => solveOperationPaths(operationRequirements, requireAdjacentDifferent),
+        [operationRequirements, requireAdjacentDifferent]
     );
     const planRows = useMemo(
-        () => buildPlanRows(paths, slots, useFive, requireAttributeOrder),
-        [paths, slots, useFive, requireAttributeOrder]
+        () => buildPlanRows(paths, operationRequirements, slots, useFive, requireAttributeOrder),
+        [paths, operationRequirements, slots, useFive, requireAttributeOrder]
     );
     const feasibleCount = useMemo(() => planRows.filter(r => r.solution != null).length, [planRows]);
     const betTag = useMemo(
@@ -941,10 +824,6 @@ const RoundComponent = ({
         () => buildExpectedOrderKey(currentColors, hitRecord.hitOrder),
         [currentColors, hitRecord.hitOrder]
     );
-
-    useEffect(() => {
-        if (!isEditingTitle) setTitleDraft(displayName);
-    }, [displayName, isEditingTitle]);
 
     useEffect(() => {
         if (isEditingTitle) titleInputRef.current?.focus();
@@ -961,68 +840,12 @@ const RoundComponent = ({
         setIsEditingTitle(false);
     };
 
-    // Helpers
-    const updateActions = (newActions: ActionItem[]) => onUpdate({ ...round, actions: newActions });
-    const updateActionItem = (id: string, updates: Partial<ActionItem>) => updateActions(round.actions.map(a => a.id === id ? { ...a, ...updates } : a));
-
-    // Add default action
-    const addAction = (slotIndex: number) => {
-        updateActions([...round.actions, {
-            id: generateId(),
-            types: ['A', '↑', '↓'],
-            slotIndex,
-            constraint: 'NONE',
-            relativeRules: [],
-            preferences: [] // Init preferences
-        }]);
-    };
-
-    // Remove logic
-    const removeAction = (id: string) => {
-        updateActions(round.actions.filter(a => a.id !== id));
-        if (editingId === id) setEditingId(null);
-    };
-
-    // Toggle Type logic
-    const toggleActionType = (id: string, type: ActionType) => {
-        const action = round.actions.find(a => a.id === id);
-        if (!action) return;
-        let newTypes: ActionType[] = [];
-        if (type === '圈') newTypes = ['圈'];
-        else {
-            const currentWithoutCircle = action.types.filter(t => t !== '圈');
-            if (currentWithoutCircle.includes(type)) {
-                if (currentWithoutCircle.length > 1) newTypes = currentWithoutCircle.filter(t => t !== type);
-                else return;
-            } else {
-                newTypes = [...currentWithoutCircle, type];
-            }
-        }
-        updateActionItem(id, { types: newTypes });
-    };
-
-    // Swap logic
-    const handleSwapClick = (id: string) => {
-        if (swapSourceId === null) setSwapSourceId(id);
-        else if (swapSourceId === id) setSwapSourceId(null);
-        else {
-            const newActions = [...round.actions];
-            const idx1 = newActions.findIndex(a => a.id === swapSourceId);
-            const idx2 = newActions.findIndex(a => a.id === id);
-            if (idx1 !== -1 && idx2 !== -1) {
-                const temp = newActions[idx1];
-                newActions[idx1] = newActions[idx2];
-                newActions[idx2] = temp;
-                // Swap slots
-                const tempSlot = newActions[idx1].slotIndex;
-                newActions[idx1].slotIndex = newActions[idx2].slotIndex;
-                newActions[idx2].slotIndex = tempSlot;
-                updateActions(newActions);
-            }
-            setSwapSourceId(null);
-        }
-    };
-
+    const updateOperationRequirements = (value: OperationRequirementData) =>
+        onUpdate({
+            ...round,
+            operationRequirements: value,
+            actions: value.groups[0]?.actions ?? []
+        });
 
     return (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
@@ -1112,150 +935,12 @@ const RoundComponent = ({
 
             {!round.isCollapsed && (
                 <div ref={contentRef} className="p-4 scroll-mt-28">
-                    <div className="mb-2 text-[10px] text-slate-400 flex flex-wrap gap-4 select-none">
-                        <span>① 点击卡片编辑操作</span>
-                        <span className="flex items-center gap-1">② 右下角 <ArrowRightLeft size={10}/> 交换顺序</span>
-                        <span>③ 虚线框和灰色序号表示软偏好(尽量满足)</span>
-                        <span>④ “{">"}” = 在某操作之前，“{"<"}” = 在某操作之后，“{"<<"}” = 紧跟某操作</span>
-                    </div>
-
-                    <div className="grid grid-cols-5 gap-2 mb-6">
-                        {slots.map((slot) => (
-                            <div key={slot.index}
-                                 className={`flex flex-col gap-2 p-1.5 rounded-lg border border-dashed ${ELEMENTS[slot.element].border} bg-slate-50/50`}>
-                                <div className="flex flex-col gap-1.5 min-h-[80px]">
-                                    {round.actions.filter(a => a.slotIndex === slot.index).map((action) => {
-                                        const displayId = getDisplayId(action.id, round.actions);
-                                        const isSwapping = swapSourceId === action.id;
-
-                                        // 1. 聚合 Fixed 信息 (Hard + Soft)
-                                        const fixedItems: { val: number; op: FixedOperator; isSoft: boolean }[] = [];
-                                        // Hard Fixed
-                                        if (action.constraint === 'FIXED') {
-                                            fixedItems.push({
-                                                val: action.fixedIndex || 1,
-                                                op: action.fixedOperator || 'AT',
-                                                isSoft: false
-                                            });
-                                        }
-                                        // Soft Fixed
-                                        (action.preferences || []).forEach(p => {
-                                            if (p.type === 'FIXED') {
-                                                fixedItems.push({
-                                                    val: p.fixedIndex || 1,
-                                                    op: p.fixedOperator || 'AT',
-                                                    isSoft: true
-                                                });
-                                            }
-                                        });
-                                        // 排序：从小到大
-                                        fixedItems.sort((a, b) => a.val - b.val);
-
-                                        // 2. 聚合 Badge 信息 (Hard Relative + Soft All)
-                                        const badges: { label: React.ReactNode; isSoft: boolean }[] = [];
-
-                                        // Hard Relative
-                                        if (action.constraint === 'RELATIVE') {
-                                            action.relativeRules.forEach(r => {
-                                                const rType = r.type === 'BEFORE' ? '>' : '<';
-                                                const target = getDisplayId(r.targetId, round.actions);
-                                                badges.push({ label: `${rType}${target}`, isSoft: false });
-                                            });
-                                        }
-                                        // Soft Prefs (Relative, Early, Late)
-                                        (action.preferences || []).forEach(p => {
-                                            if (p.type === 'EARLY') badges.push({ label: '靠前', isSoft: true });
-                                            else if (p.type === 'LATE') badges.push({ label: '靠后', isSoft: true });
-                                            else if (p.type === 'RELATIVE') {
-                                                const rType = p.relativeType === 'BEFORE' ? '>' : '<';
-                                                const target = getDisplayId(p.targetId || '', round.actions);
-                                                badges.push({ label: `${rType}${target}`, isSoft: true });
-                                            }
-                                        });
-
-                                        return (
-                                            <div key={action.id}
-                                                 className={`relative rounded border select-none transition-all flex flex-col overflow-hidden group min-h-[3.5rem] bg-white ${isSwapping ? 'border-indigo-500 ring-2 ring-indigo-500/20 z-10' : 'border-slate-200 hover:border-indigo-300'}`}>
-                                                <div
-                                                    className="absolute top-0.5 left-1 text-[9px] font-mono text-slate-300 font-bold pointer-events-none">{displayId}</div>
-                                                <button onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    removeAction(action.id);
-                                                }}
-                                                        className="absolute top-0 right-0 p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                                                    <X size={12} strokeWidth={3}/></button>
-
-                                                <div onClick={() => setEditingId(action.id)}
-                                                     className="flex-1 p-2 pt-3 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-slate-50 gap-0.5">
-
-                                                    {/* 主体内容：Fixed + Action */}
-                                                    {action.constraint === 'IMMEDIATE' ? (
-                                                        // Immediate 特殊样式
-                                                        <div
-                                                            className="flex items-center justify-center gap-1 bg-indigo-50 px-1 py-0.5 rounded border border-indigo-100 mb-0.5">
-                                                            <span
-                                                                className="text-xs font-bold text-slate-700">{getActionLabel(action.types)}</span>
-                                                            <span className="text-[10px] text-indigo-400">{'<<'}</span>
-                                                            <span
-                                                                className="text-[8px] font-mono bg-white border border-indigo-200 rounded px-1 text-indigo-600">{getDisplayId(action.immediateTargetId || '', round.actions)}</span>
-                                                        </div>
-                                                    ) : (
-                                                        // 标准样式：Fixed + Action
-                                                        <div
-                                                            className="flex items-baseline justify-center gap-1 flex-wrap w-full">
-                                                            {/* Fixed 序号部分 */}
-                                                            {fixedItems.length > 0 && (
-                                                                <div className="flex items-baseline">
-                                                                    {fixedItems.map((f, i) => (
-                                                                        <span key={i}
-                                                                              className={`text-sm font-black leading-none whitespace-nowrap ${f.isSoft ? 'text-gray-300' : 'text-amber-500'}`}>
-                                                                            {f.op === 'BEFORE' ? '<' : f.op === 'AFTER' ? '>' : ''}{f.val}
-                                                                            {i < fixedItems.length - 1 && <span
-                                                                                className="text-gray-300 font-normal mr-0.5">,</span>}
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            )}
-                                                            {/* 操作名 */}
-                                                            <span
-                                                                className="text-xs font-bold text-slate-700">{getActionLabel(action.types)}</span>
-                                                        </div>
-                                                    )}
-
-                                                    {/* 统一 Badge 区域 (硬 Relative + 所有软偏好) */}
-                                                    {badges.length > 0 && (
-                                                        <div
-                                                            className="flex flex-wrap justify-center gap-1 w-full px-1">
-                                                            {badges.map((b, i) => (
-                                                                <span key={i}
-                                                                      className={`text-[9px] font-mono font-bold px-1 py-[1px] rounded border leading-none whitespace-nowrap ${b.isSoft
-                                                                          ? 'border-dashed border-slate-300 text-slate-400 bg-slate-50'
-                                                                          : 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                                                                      }`}>
-                                                                    {b.label}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    )}
-
-                                                </div>
-
-                                                <button onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleSwapClick(action.id);
-                                                }}
-                                                        className={`absolute bottom-0 right-0 p-1 rounded-tl ${isSwapping ? 'text-indigo-600 bg-indigo-50' : 'text-slate-300 hover:text-indigo-500 hover:bg-slate-50'}`}>
-                                                    <ArrowRightLeft size={10} strokeWidth={2}/></button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                                <button onClick={() => addAction(slot.index)}
-                                        className="mt-auto w-full py-1.5 flex items-center justify-center text-slate-300 border border-dashed border-slate-200 bg-white rounded hover:text-indigo-500 hover:border-indigo-300 hover:bg-indigo-50 transition-all">
-                                    <Plus size={14} strokeWidth={3}/></button>
-                            </div>
-                        ))}
-                    </div>
+                    <OperationRequirementPanel
+                        value={operationRequirements}
+                        onChange={updateOperationRequirements}
+                        slots={slots}
+                        slotBorderClasses={slotBorderClasses}
+                    />
 
                     {requireAttributeOrder && (
                         <RoundColorPanel
@@ -1274,355 +959,6 @@ const RoundComponent = ({
                     />
                 </div>
             )}
-
-            {editingId && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20 backdrop-blur-[1px]">
-                    <div
-                        className="bg-white rounded-xl shadow-2xl border border-slate-100 w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
-                        onClick={(e) => e.stopPropagation()}>
-                        {(() => {
-                            const action = round.actions.find(a => a.id === editingId);
-                            if (!action) return null;
-                            const displayId = getDisplayId(action.id, round.actions);
-                            // [修复] 定义安全访问的 preferences，防止 undefined
-                            const safePreferences = action.preferences || [];
-
-                            // Helper to update specific preference
-                            const updatePref = (prefId: string, diff: Partial<PreferenceRule>) => {
-                                updateActionItem(action.id, {
-                                    preferences: safePreferences.map(p => p.id === prefId ? { ...p, ...diff } : p)
-                                });
-                            };
-                            const addPref = (type: PreferenceType) => {
-                                updateActionItem(action.id, {
-                                    preferences: [...safePreferences, {
-                                        id: generateId(),
-                                        type,
-                                        relativeType: 'BEFORE',
-                                        fixedOperator: 'AT',
-                                        fixedIndex: 1
-                                    }]
-                                });
-                            };
-                            const removePref = (prefId: string) => {
-                                updateActionItem(action.id, {
-                                    preferences: safePreferences.filter(p => p.id !== prefId)
-                                });
-                            };
-
-                            return (
-                                <>
-                                    <div
-                                        className="bg-slate-50 px-5 py-4 border-b border-slate-100 flex justify-between items-center shrink-0">
-                                        <div className="flex items-center gap-2">
-                                            <span
-                                                className="font-mono text-xs font-bold bg-slate-200 px-1.5 py-0.5 rounded text-slate-600">{displayId}</span>
-                                            <span className="font-bold text-slate-700">编辑操作</span>
-                                        </div>
-                                        <button onClick={() => setEditingId(null)}
-                                                className="text-slate-400 hover:text-slate-600"><X size={18}/></button>
-                                    </div>
-
-                                    <div className="p-5 overflow-y-auto space-y-6">
-                                        {/* 1. 操作类型 */}
-                                        <div className="space-y-2">
-                                            <label
-                                                className="text-xs font-bold text-slate-400 uppercase tracking-wider">操作类型</label>
-                                            <div className="grid grid-cols-4 gap-2">
-                                                {['A', '↑', '↓', '圈'].map(t => {
-                                                    const isSelected = action.types.includes(t as ActionType);
-                                                    return (
-                                                        <button key={t}
-                                                                onClick={() => toggleActionType(action.id, t as ActionType)}
-                                                                className={`py-2 rounded text-sm font-bold border transition-all ${isSelected ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'}`}>
-                                                            {t}
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-
-                                        <div className="border-t border-slate-100"></div>
-
-                                        {/* 2. 硬性约束 (Hard Constraints) */}
-                                        <div className="space-y-3">
-                                            <div className="flex items-center justify-between">
-                                                <label
-                                                    className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                                                    <div className="w-2 h-2 rounded-full bg-slate-800"></div>
-                                                    硬性约束 (必须满足)
-                                                </label>
-                                            </div>
-
-                                            <div className="flex rounded-lg bg-slate-100 p-1">
-                                                {[{ v: 'NONE', l: '无' }, { v: 'FIXED', l: '固定' }, {
-                                                    v: 'RELATIVE',
-                                                    l: '相对'
-                                                }, { v: 'IMMEDIATE', l: '紧跟' }].map(opt => (
-                                                    <button key={opt.v} onClick={() => updateActionItem(action.id, {
-                                                        constraint: opt.v as ConstraintType,
-                                                        fixedIndex: 1,
-                                                        fixedOperator: 'AT',
-                                                        relativeRules: [],
-                                                        immediateTargetId: ''
-                                                    })}
-                                                            className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${action.constraint === opt.v ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{opt.l}</button>
-                                                ))}
-                                            </div>
-
-                                            {action.constraint === 'FIXED' && (
-                                                <div
-                                                    className="flex flex-col gap-2 py-2 bg-slate-50 rounded-lg border border-slate-200 p-3 animate-in fade-in slide-in-from-top-2 duration-200">
-                                                    <div
-                                                        className="flex rounded bg-white border border-slate-200 p-0.5">
-                                                        {[{ v: 'BEFORE', l: '第X个前 (<)' }, {
-                                                            v: 'AT',
-                                                            l: '第X个 (=)'
-                                                        }, { v: 'AFTER', l: '第X个后 (>)' }].map(opt => (
-                                                            <button key={opt.v}
-                                                                    onClick={() => updateActionItem(action.id, { fixedOperator: opt.v as FixedOperator })}
-                                                                    className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${(action.fixedOperator || 'AT') === opt.v ? 'bg-slate-200 text-slate-800' : 'text-slate-400 hover:bg-slate-50'}`}>{opt.l}</button>
-                                                        ))}
-                                                    </div>
-                                                    <div className="flex items-center justify-center gap-3">
-                                                        <span className="text-sm text-slate-500 font-medium">X = </span>
-                                                        <div
-                                                            className="flex items-center bg-white rounded border border-slate-200">
-                                                            <button
-                                                                onClick={() => updateActionItem(action.id, { fixedIndex: Math.max(1, (action.fixedIndex || 1) - 1) })}
-                                                                className="px-3 py-1 text-slate-500 hover:bg-slate-50 font-bold border-r border-slate-100">-
-                                                            </button>
-                                                            <span
-                                                                className="w-10 text-center font-bold text-slate-700">{action.fixedIndex || 1}</span>
-                                                            <button
-                                                                onClick={() => updateActionItem(action.id, { fixedIndex: Math.min(20, (action.fixedIndex || 1) + 1) })}
-                                                                className="px-3 py-1 text-slate-500 hover:bg-slate-50 font-bold border-l border-slate-100">+
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {action.constraint === 'IMMEDIATE' && (
-                                                <div
-                                                    className="flex items-center gap-2 bg-slate-50 p-3 rounded-lg border border-slate-200 animate-in fade-in slide-in-from-top-2 duration-200">
-                                                    <span
-                                                        className="text-xs font-bold text-slate-500 whitespace-nowrap">紧接在</span>
-                                                    <select value={action.immediateTargetId || ''}
-                                                            onChange={(e) => updateActionItem(action.id, { immediateTargetId: e.target.value })}
-                                                            className="flex-1 text-xs border border-slate-300 rounded py-1.5 pl-2 bg-white focus:ring-2 focus:ring-indigo-500">
-                                                        <option value="">选择操作...</option>
-                                                        {slots.map(s => {
-                                                            const groupOps = round.actions.filter(a => a.slotIndex === s.index && a.id !== action.id);
-                                                            if (groupOps.length === 0) return null;
-                                                            return <optgroup key={s.index}
-                                                                             label={`${s.index + 1}号位 (${s.element})`}>{groupOps.map(op =>
-                                                                <option key={op.id}
-                                                                        value={op.id}>{s.index + 1}号位-{getActionLabel(op.types)} ({getDisplayId(op.id, round.actions)})</option>)}</optgroup>
-                                                        })}
-                                                    </select>
-                                                    <span
-                                                        className="text-xs font-bold text-slate-500 whitespace-nowrap">之后</span>
-                                                </div>
-                                            )}
-
-                                            {action.constraint === 'RELATIVE' && (
-                                                <div
-                                                    className="space-y-2 bg-slate-50 p-2 rounded-lg border border-slate-200 animate-in fade-in slide-in-from-top-2 duration-200">
-                                                    {action.relativeRules.map(rule => (
-                                                        <div key={rule.id}
-                                                             className="flex items-center gap-2 bg-white p-1.5 rounded border border-slate-200 shadow-sm">
-                                                            <button
-                                                                onClick={() => updateActions(round.actions.map(a => a.id === action.id ? {
-                                                                    ...a,
-                                                                    relativeRules: a.relativeRules.filter(r => r.id !== rule.id)
-                                                                } : a))} className="text-slate-300 hover:text-red-500">
-                                                                <X size={14}/></button>
-                                                            <select value={rule.targetId}
-                                                                    onChange={(e) => updateActions(round.actions.map(a => a.id === action.id ? {
-                                                                        ...a,
-                                                                        relativeRules: a.relativeRules.map(r => r.id === rule.id ? {
-                                                                            ...r,
-                                                                            targetId: e.target.value
-                                                                        } : r)
-                                                                    } : a))}
-                                                                    className="flex-1 text-xs border-slate-200 rounded py-1 pl-1 bg-transparent">
-                                                                <option value="">选择操作...</option>
-                                                                {slots.map(s => {
-                                                                    const groupOps = round.actions.filter(a => a.slotIndex === s.index && a.id !== action.id && a.slotIndex !== action.slotIndex);
-                                                                    if (groupOps.length === 0) return null;
-                                                                    return <optgroup key={s.index}
-                                                                                     label={`${s.index + 1}号位 (${s.element})`}>{groupOps.map(op =>
-                                                                        <option key={op.id}
-                                                                                value={op.id}>{s.index + 1}号位-{getActionLabel(op.types)} ({getDisplayId(op.id, round.actions)})</option>)}</optgroup>
-                                                                })}
-                                                            </select>
-                                                            <button
-                                                                onClick={() => updateActions(round.actions.map(a => a.id === action.id ? {
-                                                                    ...a,
-                                                                    relativeRules: a.relativeRules.map(r => r.id === rule.id ? {
-                                                                        ...r,
-                                                                        type: r.type === 'BEFORE' ? 'AFTER' : 'BEFORE'
-                                                                    } : r)
-                                                                } : a))}
-                                                                className={`shrink-0 px-2 py-1 rounded text-xs font-bold w-12 text-center ${rule.type === 'BEFORE' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{rule.type === 'BEFORE' ? '之前' : '之后'}</button>
-                                                        </div>
-                                                    ))}
-                                                    <button
-                                                        onClick={() => updateActions(round.actions.map(a => a.id === action.id ? {
-                                                            ...a,
-                                                            relativeRules: [...a.relativeRules, {
-                                                                id: generateId(),
-                                                                type: 'BEFORE',
-                                                                targetId: ''
-                                                            }]
-                                                        } : a))}
-                                                        className="w-full py-1.5 text-xs font-medium text-indigo-600 border border-dashed border-indigo-200 rounded hover:bg-indigo-50">+
-                                                        添加条件
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="border-t border-slate-100"></div>
-
-                                        {/* 3. 软性偏好 (Soft Preferences) */}
-                                        <div className="space-y-3">
-                                            <div className="flex items-center justify-between">
-                                                <label
-                                                    className="text-xs font-bold text-gray-500 flex items-center gap-2">
-                                                    <div
-                                                        className="w-2 h-2 rounded-full border border-gray-400 border-dashed"></div>
-                                                    软性偏好 (尽量满足)
-                                                </label>
-
-                                                {/* Add Preference Buttons */}
-                                                <div className="flex gap-1">
-                                                    <button onClick={() => addPref('EARLY')}
-                                                            className="px-2 py-1 text-[10px] bg-slate-50 border border-slate-200 rounded hover:bg-slate-100">+
-                                                        靠前
-                                                    </button>
-                                                    <button onClick={() => addPref('LATE')}
-                                                            className="px-2 py-1 text-[10px] bg-slate-50 border border-slate-200 rounded hover:bg-slate-100">+
-                                                        靠后
-                                                    </button>
-                                                    <button onClick={() => addPref('FIXED')}
-                                                            className="px-2 py-1 text-[10px] bg-slate-50 border border-slate-200 rounded hover:bg-slate-100">+
-                                                        固定
-                                                    </button>
-                                                    <button onClick={() => addPref('RELATIVE')}
-                                                            className="px-2 py-1 text-[10px] bg-slate-50 border border-slate-200 rounded hover:bg-slate-100">+
-                                                        相对
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {safePreferences.length === 0 && (
-                                                <div
-                                                    className="text-xs text-slate-300 italic text-center py-2">暂无偏好</div>
-                                            )}
-
-                                            <div className="space-y-2">
-                                                {safePreferences.map(pref => (
-                                                    <div key={pref.id}
-                                                         className="bg-white border border-dashed border-slate-300 rounded p-2 flex gap-2 items-start group">
-                                                        {/* Type Badge */}
-                                                        <div
-                                                            className="shrink-0 px-1.5 py-0.5 bg-slate-100 text-[10px] font-bold text-slate-500 rounded border border-slate-200">
-                                                            {pref.type === 'EARLY' && '靠前'}
-                                                            {pref.type === 'LATE' && '靠后'}
-                                                            {pref.type === 'FIXED' && '固定'}
-                                                            {pref.type === 'RELATIVE' && '相对'}
-                                                        </div>
-
-                                                        {/* Config Area */}
-                                                        <div className="flex-1 space-y-2">
-                                                            {/* Fixed Config */}
-                                                            {pref.type === 'FIXED' && (
-                                                                <div className="flex items-center gap-2">
-                                                                    <div
-                                                                        className="flex rounded bg-slate-50 border border-slate-200 p-0.5">
-                                                                        {[{ v: 'BEFORE', l: '<' }, {
-                                                                            v: 'AT',
-                                                                            l: '='
-                                                                        }, { v: 'AFTER', l: '>' }].map(opt => (
-                                                                            <button key={opt.v}
-                                                                                    onClick={() => updatePref(pref.id, { fixedOperator: opt.v as FixedOperator })}
-                                                                                    className={`px-2 py-0.5 text-[10px] font-bold rounded ${pref.fixedOperator === opt.v ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>{opt.l}</button>
-                                                                        ))}
-                                                                    </div>
-                                                                    <div
-                                                                        className="flex items-center bg-slate-50 rounded border border-slate-200">
-                                                                        <button
-                                                                            onClick={() => updatePref(pref.id, { fixedIndex: Math.max(1, (pref.fixedIndex || 1) - 1) })}
-                                                                            className="px-2 text-slate-400 hover:text-slate-600">-
-                                                                        </button>
-                                                                        <span
-                                                                            className="w-6 text-center text-xs font-bold text-slate-600">{pref.fixedIndex}</span>
-                                                                        <button
-                                                                            onClick={() => updatePref(pref.id, { fixedIndex: Math.min(20, (pref.fixedIndex || 1) + 1) })}
-                                                                            className="px-2 text-slate-400 hover:text-slate-600">+
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-                                                            )}
-
-                                                            {/* Relative Config */}
-                                                            {pref.type === 'RELATIVE' && (
-                                                                <div className="flex items-center gap-2">
-                                                                    <select value={pref.targetId}
-                                                                            onChange={(e) => updatePref(pref.id, { targetId: e.target.value })}
-                                                                            className="flex-1 text-xs border border-slate-200 rounded py-1 pl-1 bg-white">
-                                                                        <option value="">选择操作...</option>
-                                                                        {slots.map(s => {
-                                                                            const groupOps = round.actions.filter(a => a.slotIndex === s.index && a.id !== action.id);
-                                                                            if (groupOps.length === 0) return null;
-                                                                            return <optgroup key={s.index}
-                                                                                             label={`${s.index + 1}号位 (${s.element})`}>{groupOps.map(op =>
-                                                                                <option key={op.id}
-                                                                                        value={op.id}>{s.index + 1}号位-{getActionLabel(op.types)} ({getDisplayId(op.id, round.actions)})</option>)}</optgroup>
-                                                                        })}
-                                                                    </select>
-                                                                    <button
-                                                                        onClick={() => updatePref(pref.id, { relativeType: pref.relativeType === 'BEFORE' ? 'AFTER' : 'BEFORE' })}
-                                                                        className={`shrink-0 px-2 py-1 rounded text-[10px] font-bold w-10 text-center ${pref.relativeType === 'BEFORE' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'}`}>
-                                                                        {pref.relativeType === 'BEFORE' ? '前' : '后'}
-                                                                    </button>
-                                                                </div>
-                                                            )}
-
-                                                            {(pref.type === 'EARLY' || pref.type === 'LATE') && (
-                                                                <div
-                                                                    className="text-[10px] text-slate-400">尽可能{pref.type === 'EARLY' ? '排在前面' : '排在后面'}</div>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Delete Button */}
-                                                        <button onClick={() => removePref(pref.id)}
-                                                                className="text-slate-300 hover:text-red-500 p-1"><X
-                                                            size={14}/></button>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-
-                                        <div className="pt-4 border-t border-slate-100 flex justify-between shrink-0">
-                                            <button onClick={() => removeAction(action.id)}
-                                                    className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50">
-                                                <Trash2 size={14}/> 删除操作
-                                            </button>
-                                            <button onClick={() => setEditingId(null)}
-                                                    className="px-4 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded shadow-sm hover:bg-indigo-700">完成
-                                            </button>
-                                        </div>
-                                    </div>
-                                </>
-                            );
-                        })()}
-                    </div>
-                </div>
-            )}
         </div>
     );
 };
@@ -1636,13 +972,19 @@ const withOnlyExpanded = (rounds: Round[], activeIndex: number): Round[] =>
 const normalizeRound = (raw: Partial<Round> & { id: string; ignoreMechanics?: boolean }): Round => {
     const legacyIgnore = raw.ignoreMechanics === true;
     const defaultConstraints = legacyIgnore ? false : true;
+    const legacyActions = (raw.actions ?? []).map(a => ({
+        ...a,
+        preferences: a.preferences ?? [],
+        relativeRules: a.relativeRules ?? []
+    }));
+    const operationRequirements = normalizeOperationRequirementData(
+        raw.operationRequirements,
+        legacyActions
+    );
     return {
         id: raw.id,
-        actions: (raw.actions ?? []).map(a => ({
-            ...a,
-            preferences: a.preferences ?? [],
-            relativeRules: a.relativeRules ?? []
-        })),
+        operationRequirements,
+        actions: operationRequirements.groups[0]?.actions ?? [],
         isCollapsed: raw.isCollapsed,
         name: raw.name,
         requireAdjacentDifferent: raw.requireAdjacentDifferent ?? defaultConstraints,
@@ -1713,18 +1055,24 @@ export default function XunYouKpi() {
         if (window.confirm("确认删除？")) updateRounds(rounds.filter(r => r.id !== id));
     };
     const cloneRound = (r: Round) => {
-        // 深拷贝 actions 并生成新 ID
-        const newActions = r.actions.map(a => ({
-            ...a,
+        const opReq = getRoundOperationRequirements(r);
+        const newGroups = opReq.groups.map(g => ({
             id: generateId(),
-            relativeRules: a.relativeRules.map(rule => ({ ...rule, id: generateId(), targetId: '' }))
+            actions: g.actions.map(a => ({
+                ...a,
+                id: generateId(),
+                relativeRules: a.relativeRules.map(rule => ({ ...rule, id: generateId(), targetId: '' })),
+                preferences: (a.preferences || []).map(p => ({ ...p, id: generateId() }))
+            }))
         }));
+        const operationRequirements = { groups: newGroups };
 
         const newIndex = rounds.length;
         const cloned: Round = {
             ...r,
             id: generateId(),
-            actions: newActions,
+            operationRequirements,
+            actions: newGroups[0]?.actions ?? [],
             hitRecord: {
                 ...(r.hitRecord ?? DEFAULT_HIT_RECORD),
                 hitOrder: [...(r.hitRecord?.hitOrder ?? DEFAULT_HIT_RECORD.hitOrder)]
@@ -1779,14 +1127,22 @@ export default function XunYouKpi() {
             newSlots[index].element = tempEl;
 
             // 2. 交换所有回合中的操作位置 (Rounds)
-            const newRounds = rounds.map(r => ({
-                ...r,
-                actions: r.actions.map(a => {
-                    if (a.slotIndex === swapSlotIndex) return { ...a, slotIndex: index };
-                    if (a.slotIndex === index) return { ...a, slotIndex: swapSlotIndex };
-                    return a;
-                })
-            }));
+            const newRounds = rounds.map(r => {
+                const opReq = getRoundOperationRequirements(r);
+                const newGroups = opReq.groups.map(g => ({
+                    ...g,
+                    actions: g.actions.map(a => {
+                        if (a.slotIndex === swapSlotIndex) return { ...a, slotIndex: index };
+                        if (a.slotIndex === index) return { ...a, slotIndex: swapSlotIndex };
+                        return a;
+                    })
+                }));
+                return {
+                    ...r,
+                    operationRequirements: { groups: newGroups },
+                    actions: newGroups[0]?.actions ?? r.actions ?? []
+                };
+            });
 
             // 保存历史并更新
             pushHistory(rounds);

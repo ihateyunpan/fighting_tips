@@ -1551,7 +1551,7 @@ export default function YiZhanGuanTou() {
             } else {
                 alert("文件格式不正确，缺少关键数据。");
             }
-        } catch (err) {
+        } catch {
             alert("无法解析数据，请确保内容是有效的 JSON 格式。");
         }
     };

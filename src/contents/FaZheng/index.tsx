@@ -343,7 +343,7 @@ export default function FaZhengHelper() {
                 if (data.gold !== undefined && data.buffer) {
                     setState(data); // 这会自动推入历史栈
                 }
-            } catch (e) {
+            } catch {
                 alert("导入失败");
             }
         }
@@ -362,9 +362,10 @@ export default function FaZhengHelper() {
             gold: state.gold,
             buffer: state.buffer,
             drawCount: state.drawCount,
+            round: state.round,
             config: state.config
         });
-    }, [state.gold, state.buffer, state.drawCount, state.config]); // 依赖项
+    }, [state.gold, state.buffer, state.drawCount, state.round, state.config]);
 
     // [修改] 渲染 Badge：增加 isSmall 参数控制字体大小
     const renderBadges = (badges: BadgeDef[], isSmall = false) => (
