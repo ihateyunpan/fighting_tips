@@ -28,8 +28,8 @@ const contentMap: Record<string, LazyComponent> = {
     '2': Relic19_4,
     '3': KpiZhuGeLiang,
     '4': KpiXunYou,
-    '5': Yuan2026L3,
-    '6': Yuan2026L5,
+    '5': Yuan2026L5,
+    '6': Yuan2026L3,
     '999': FaZheng,
 };
 

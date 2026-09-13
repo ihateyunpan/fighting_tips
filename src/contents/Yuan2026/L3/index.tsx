@@ -2158,12 +2158,12 @@ export default function Yuan2026L3() {
                         ）时，正常打 boss。
                     </p>
                     <p>
-                        有时候可以利用初始的几个回合做一些准备工作（比如：叠
+                        可以利用初始的几个回合做一些准备工作（比如：叠
                         dot，程普叠武器等）。
                     </p>
                     <p>
-                        如果目标是压血，必须压到 <Hl>50% 以下</Hl>
-                        ，否则进阶段二会把压掉的血补回来。
+                        如果目标是压血，必须压到 <Hl>50% 以下</Hl>，否则进阶段二会把压掉的血补回来。<br/>
+                        （即：阶段一转阶段二的时候，boss血量&lt;50%）
                     </p>
                     <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                         <p className="font-semibold text-slate-800">必须保证：</p>
@@ -2178,7 +2178,7 @@ export default function Yuan2026L3() {
                             </li>
                         </ul>
                         <p>
-                            另外要记住：boss 受到的 <Hl>第一种伤害全程为 0</Hl>
+                            另外要记住：每个回合，boss 受到的 <Hl>第一种伤害在整个回合都为 0</Hl>
                             （除非用 <Hl>戏学逃课</Hl>）。
                         </p>
                     </div>
