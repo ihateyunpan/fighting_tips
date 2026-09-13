@@ -25,6 +25,7 @@ import {
     findShortestElimination,
     formatSlotConstraint,
     hasAnySeal,
+    type DualSnakePersonIndex,
     type PullPlan,
     resizeColors,
     resizeRoundConstraints,
@@ -49,8 +50,26 @@ const STORAGE_KEY_STAGE1 = 'yuan2026-l3-stage1-v4';
 const STORAGE_KEY_STAGE2 = 'yuan2026-l3-stage2-v5';
 const STORAGE_KEY_PULL_REQ = 'yuan2026-l3-pull-req-v4';
 const STORAGE_KEY_TEAM_SIZE = 'yuan2026-l3-team-size-v1';
-const EXPORT_VERSION = 'yuan2026-l3-v4';
+const STORAGE_KEY_DUAL_SNAKE = 'yuan2026-l3-dual-snake-v1';
+const EXPORT_VERSION = 'yuan2026-l3-v5';
 const TEAM_SIZE_OPTIONS = [1, 2, 3, 4, 5] as const;
+
+interface DualSnakeState {
+    enabled: boolean;
+    /** 0-based；仅 enabled 时有效 */
+    personIndex: number;
+}
+
+const DEFAULT_DUAL_SNAKE: DualSnakeState = { enabled: false, personIndex: 0 };
+
+function effectiveDualSnake(
+    teamSize: number,
+    dualSnake: DualSnakeState,
+): DualSnakePersonIndex {
+    if (teamSize >= 5 || !dualSnake.enabled) return null;
+    const max = Math.max(0, teamSize - 1);
+    return Math.min(max, Math.max(0, Math.floor(dualSnake.personIndex)));
+}
 
 function useStickyState<T>(
     defaultValue: T,
@@ -227,12 +246,17 @@ function cascadeStage1Rounds(
     rounds: RoundData[],
     fromIndex: number,
     getDefaultPulls: (roundNumber: number) => number[],
+    dualSnakePersonIndex: DualSnakePersonIndex = null,
 ): RoundData[] {
     if (rounds.length <= 1 || fromIndex >= rounds.length - 1) return rounds;
     const next = [...rounds];
     for (let i = fromIndex; i < next.length - 1; i++) {
         const prev = next[i]!;
-        const derived = deriveNextRound(prev.snapshot, prev.after.colors);
+        const derived = deriveNextRound(
+            prev.snapshot,
+            prev.after.colors,
+            dualSnakePersonIndex,
+        );
         const curr = next[i + 1]!;
         if (sameStage1Snapshot(curr.snapshot, derived)) break;
         next[i + 1] = {
@@ -251,12 +275,17 @@ function cascadeStage1Rounds(
 function cascadeStage2Rounds(
     rounds: Stage2RoundData[],
     fromIndex: number,
+    dualSnakePersonIndex: DualSnakePersonIndex = null,
 ): Stage2RoundData[] {
     if (rounds.length <= 1 || fromIndex >= rounds.length - 1) return rounds;
     const next = [...rounds];
     for (let i = fromIndex; i < next.length - 1; i++) {
         const prev = next[i]!;
-        const derived = deriveNextStage2Round(prev.snapshot, prev.after.colors);
+        const derived = deriveNextStage2Round(
+            prev.snapshot,
+            prev.after.colors,
+            dualSnakePersonIndex,
+        );
         const curr = next[i + 1]!;
         if (sameStage2Snapshot(curr.snapshot, derived)) break;
         next[i + 1] = {
@@ -453,14 +482,73 @@ function SlotConstraintsReadonly({ constraints }: { constraints: RoundConstraint
     );
 }
 
+function DualSnakePositionPicker({
+    teamSize,
+    value,
+    onChange,
+}: {
+    teamSize: number;
+    value: number;
+    onChange: (personIndex: number) => void;
+}) {
+    const square = 22;
+    const gap = 3;
+    return (
+        <div className="flex flex-wrap gap-3">
+            {Array.from({ length: teamSize }, (_, snakeAt) => {
+                const selected = value === snakeAt;
+                return (
+                    <button
+                        key={snakeAt}
+                        type="button"
+                        onClick={() => onChange(snakeAt)}
+                        className={`rounded-lg border-2 px-2.5 py-2 transition-colors ${
+                            selected
+                                ? 'border-amber-500 bg-amber-50 shadow-sm'
+                                : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                        aria-pressed={selected}
+                        aria-label={`双蛇在${snakeAt + 1}号位`}
+                        title={`双蛇在${snakeAt + 1}号位`}
+                    >
+                        <div
+                            className="flex items-stretch"
+                            style={{ height: square, gap }}
+                        >
+                            {Array.from({ length: teamSize }, (_, slot) => {
+                                const isDual = slot === snakeAt;
+                                return (
+                                    <div
+                                        key={slot}
+                                        className={`h-full rounded-sm border ${
+                                            isDual
+                                                ? 'border-amber-700 bg-amber-500'
+                                                : 'border-slate-400 bg-slate-200'
+                                        }`}
+                                        style={{
+                                            width: isDual ? square * 2 : square,
+                                        }}
+                                    />
+                                );
+                            })}
+                        </div>
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
 function PlanTable({
     snapshot,
     getConstraints,
     onApplyPlan,
+    dualSnakePersonIndex,
 }: {
     snapshot: RoundSnapshot;
     getConstraints: (roundNumber: number) => RoundConstraints;
     onApplyPlan: (plan: PullPlan) => void;
+    dualSnakePersonIndex: DualSnakePersonIndex;
 }) {
     const teamSize = snapshot.startColors.length;
 
@@ -469,7 +557,12 @@ function PlanTable({
             if (!snapshot.seals[target]) {
                 return { target, plan: null, pathLength: null, disabled: true };
             }
-            const result = findShortestElimination(snapshot, target, getConstraints);
+            const result = findShortestElimination(
+                snapshot,
+                target,
+                getConstraints,
+                dualSnakePersonIndex,
+            );
             return {
                 target,
                 plan: result?.firstPulls ?? null,
@@ -477,7 +570,7 @@ function PlanTable({
                 disabled: false,
             };
         });
-    }, [snapshot, getConstraints]);
+    }, [snapshot, getConstraints, dualSnakePersonIndex]);
 
     const slots = Array.from({ length: teamSize }, (_, i) => i);
 
@@ -575,15 +668,17 @@ function Stage2PlanTable({
     snapshot,
     constraints,
     onApplyPlan,
+    dualSnakePersonIndex,
 }: {
     snapshot: Stage2RoundSnapshot;
     constraints: RoundConstraints;
     onApplyPlan: (plan: PullPlan) => void;
+    dualSnakePersonIndex: DualSnakePersonIndex;
 }) {
     const teamSize = snapshot.startColors.length;
     const plans = useMemo(
-        () => findAvoidExitPlans(snapshot, constraints),
-        [snapshot, constraints],
+        () => findAvoidExitPlans(snapshot, constraints, dualSnakePersonIndex),
+        [snapshot, constraints, dualSnakePersonIndex],
     );
     const slots = Array.from({ length: teamSize }, (_, i) => i);
 
@@ -1032,6 +1127,7 @@ function RoundPanel({
     getConstraints,
     onJumpToPullReq,
     canDelete,
+    dualSnakePersonIndex,
 }: {
     round: RoundData;
     roundConstraints: RoundConstraints;
@@ -1043,6 +1139,7 @@ function RoundPanel({
     getConstraints: (roundNumber: number) => RoundConstraints;
     onJumpToPullReq: () => void;
     canDelete: boolean;
+    dualSnakePersonIndex: DualSnakePersonIndex;
 }) {
     const { snapshot, after } = round;
 
@@ -1055,8 +1152,9 @@ function RoundPanel({
                 snapshot.energyMax,
                 snapshot.seals,
                 true,
+                dualSnakePersonIndex,
             ),
-        [after.colors, snapshot],
+        [after.colors, snapshot, dualSnakePersonIndex],
     );
 
     return (
@@ -1159,6 +1257,7 @@ function RoundPanel({
                             snapshot={snapshot}
                             getConstraints={getConstraints}
                             onApplyPlan={onApplyPlan}
+                            dualSnakePersonIndex={dualSnakePersonIndex}
                         />
                     </div>
 
@@ -1218,6 +1317,7 @@ function Stage2RoundPanel({
     onUndoPull,
     onApplyPlan,
     canDelete,
+    dualSnakePersonIndex,
 }: {
     round: Stage2RoundData;
     isBaseRound: boolean;
@@ -1234,6 +1334,7 @@ function Stage2RoundPanel({
     onUndoPull: () => void;
     onApplyPlan: (plan: PullPlan) => void;
     canDelete: boolean;
+    dualSnakePersonIndex: DualSnakePersonIndex;
 }) {
     const { snapshot, after, pullRequirements } = round;
     const startEditable = isBaseRound;
@@ -1247,8 +1348,9 @@ function Stage2RoundPanel({
                 snapshot.energyMax,
                 snapshot.seals,
                 false,
+                dualSnakePersonIndex,
             ),
-        [after.colors, snapshot],
+        [after.colors, snapshot, dualSnakePersonIndex],
     );
 
     const nextLayers = useMemo(
@@ -1375,6 +1477,7 @@ function Stage2RoundPanel({
                             snapshot={snapshot}
                             constraints={pullRequirements}
                             onApplyPlan={onApplyPlan}
+                            dualSnakePersonIndex={dualSnakePersonIndex}
                         />
                     </div>
 
@@ -1491,6 +1594,14 @@ function isStage2RoundDataArray(value: unknown): value is Stage2RoundData[] {
 
 export default function Yuan2026L3() {
     const [teamSize, setTeamSize] = useStickyState<number>(5, STORAGE_KEY_TEAM_SIZE);
+    const [dualSnake, setDualSnake] = useStickyState<DualSnakeState>(
+        DEFAULT_DUAL_SNAKE,
+        STORAGE_KEY_DUAL_SNAKE,
+    );
+    const dualSnakePersonIndex = useMemo(
+        () => effectiveDualSnake(teamSize, dualSnake),
+        [teamSize, dualSnake],
+    );
     const [rounds, setRounds] = useStickyState<RoundData[]>(
         [createRound(createInitialSnapshot(teamSize), true)],
         STORAGE_KEY_STAGE1,
@@ -1531,6 +1642,14 @@ export default function Yuan2026L3() {
             return;
         }
         setTeamSize(size);
+        if (size >= 5) {
+            setDualSnake(DEFAULT_DUAL_SNAKE);
+        } else {
+            setDualSnake((prev) => ({
+                ...prev,
+                personIndex: Math.min(prev.personIndex, size - 1),
+            }));
+        }
         setRounds([
             createRound(
                 createInitialSnapshot(size),
@@ -1542,6 +1661,20 @@ export default function Yuan2026L3() {
         setStage2Rounds([
             createStage2Round(createInitialStage2Snapshot(size), true),
         ]);
+    };
+
+    const applyDualSnake = (next: DualSnakeState) => {
+        const clamped: DualSnakeState = {
+            enabled: next.enabled && teamSize < 5,
+            personIndex: Math.min(
+                Math.max(0, Math.floor(next.personIndex)),
+                Math.max(0, teamSize - 1),
+            ),
+        };
+        const effective = effectiveDualSnake(teamSize, clamped);
+        setDualSnake(clamped);
+        setRounds((prev) => cascadeStage1Rounds(prev, 0, getDefaultPulls, effective));
+        setStage2Rounds((prev) => cascadeStage2Rounds(prev, 0, effective));
     };
 
     const jumpToColorRound = (roundNumber: number) => {
@@ -1583,7 +1716,7 @@ export default function Yuan2026L3() {
             const idx = prev.findIndex((r) => r.id === id);
             if (idx < 0) return prev;
             let next = prev.map((r) => (r.id === id ? updater(r) : r));
-            next = cascadeStage1Rounds(next, idx, getDefaultPulls);
+            next = cascadeStage1Rounds(next, idx, getDefaultPulls, dualSnakePersonIndex);
             const updated = next[idx];
             if (updated && !updated.isCollapsed) {
                 return collapseOthers(next, id);
@@ -1600,7 +1733,7 @@ export default function Yuan2026L3() {
             const idx = prev.findIndex((r) => r.id === id);
             if (idx < 0) return prev;
             let next = prev.map((r) => (r.id === id ? updater(r) : r));
-            next = cascadeStage2Rounds(next, idx);
+            next = cascadeStage2Rounds(next, idx, dualSnakePersonIndex);
             const updated = next[idx];
             if (updated && !updated.isCollapsed) {
                 return collapseOthers(next, id);
@@ -1669,7 +1802,11 @@ export default function Yuan2026L3() {
             ]);
             return;
         }
-        const nextSnapshot = deriveNextRound(last.snapshot, last.after.colors);
+        const nextSnapshot = deriveNextRound(
+            last.snapshot,
+            last.after.colors,
+            dualSnakePersonIndex,
+        );
 
         if (!hasAnySeal(nextSnapshot.seals)) {
             if (
@@ -1704,7 +1841,11 @@ export default function Yuan2026L3() {
                     createStage2Round(createInitialStage2Snapshot(teamSize), true),
                 ];
             }
-            const nextSnapshot = deriveNextStage2Round(last.snapshot, last.after.colors);
+            const nextSnapshot = deriveNextStage2Round(
+                last.snapshot,
+                last.after.colors,
+                dualSnakePersonIndex,
+            );
             const collapsed = prev.map((r) => ({ ...r, isCollapsed: true }));
             return [
                 ...collapsed,
@@ -1800,7 +1941,7 @@ export default function Yuan2026L3() {
                     isCollapsed: false,
                 };
             });
-            next = cascadeStage1Rounds(next, 0, getDefaultPulls);
+            next = cascadeStage1Rounds(next, 0, getDefaultPulls, dualSnakePersonIndex);
             return collapseOthers(next, id);
         });
     };
@@ -1830,7 +1971,7 @@ export default function Yuan2026L3() {
                     isCollapsed: false,
                 };
             });
-            next = cascadeStage1Rounds(next, 0, getDefaultPulls);
+            next = cascadeStage1Rounds(next, 0, getDefaultPulls, dualSnakePersonIndex);
             return collapseOthers(next, id);
         });
     };
@@ -1853,7 +1994,7 @@ export default function Yuan2026L3() {
                     isCollapsed: false,
                 };
             });
-            next = cascadeStage1Rounds(next, 0, getDefaultPulls);
+            next = cascadeStage1Rounds(next, 0, getDefaultPulls, dualSnakePersonIndex);
             return collapseOthers(next, id);
         });
     };
@@ -1873,7 +2014,7 @@ export default function Yuan2026L3() {
                     isCollapsed: false,
                 };
             });
-            next = cascadeStage2Rounds(next, 0);
+            next = cascadeStage2Rounds(next, 0, dualSnakePersonIndex);
             return collapseOthers(next, id);
         });
     };
@@ -1899,7 +2040,7 @@ export default function Yuan2026L3() {
                     isCollapsed: false,
                 };
             });
-            next = cascadeStage2Rounds(next, 0);
+            next = cascadeStage2Rounds(next, 0, dualSnakePersonIndex);
             return collapseOthers(next, id);
         });
     };
@@ -2011,6 +2152,7 @@ export default function Yuan2026L3() {
     const handleExport = () => {
         const data = {
             teamSize,
+            dualSnake,
             pullReqRows,
             rounds,
             stage2Rounds,
@@ -2027,6 +2169,7 @@ export default function Yuan2026L3() {
         try {
             const json = JSON.parse(jsonContent) as {
                 teamSize?: unknown;
+                dualSnake?: unknown;
                 pullReqRows?: unknown;
                 rounds?: unknown;
                 stage2Rounds?: unknown;
@@ -2047,6 +2190,30 @@ export default function Yuan2026L3() {
                     : (json.rounds[0]?.snapshot.startColors.length ?? teamSize);
             const size = Math.min(5, Math.max(1, Math.floor(importedSize)));
             setTeamSize(size);
+
+            const importedDual =
+                json.dualSnake != null &&
+                typeof json.dualSnake === 'object' &&
+                json.dualSnake !== null &&
+                'enabled' in json.dualSnake &&
+                'personIndex' in json.dualSnake &&
+                typeof (json.dualSnake as DualSnakeState).enabled === 'boolean' &&
+                typeof (json.dualSnake as DualSnakeState).personIndex === 'number'
+                    ? {
+                          enabled:
+                              size < 5 && (json.dualSnake as DualSnakeState).enabled,
+                          personIndex: Math.min(
+                              Math.max(
+                                  0,
+                                  Math.floor(
+                                      (json.dualSnake as DualSnakeState).personIndex,
+                                  ),
+                              ),
+                              Math.max(0, size - 1),
+                          ),
+                      }
+                    : DEFAULT_DUAL_SNAKE;
+            setDualSnake(importedDual);
 
             const normalizedRounds =
                 json.rounds.length > 0
@@ -2145,6 +2312,44 @@ export default function Yuan2026L3() {
                             </button>
                         ))}
                     </div>
+                    {teamSize < 5 && (
+                        <div className="mt-4 space-y-3">
+                            <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none">
+                                <input
+                                    type="checkbox"
+                                    checked={dualSnake.enabled}
+                                    onChange={(e) =>
+                                        applyDualSnake({
+                                            enabled: e.target.checked,
+                                            personIndex: dualSnake.personIndex,
+                                        })
+                                    }
+                                    className="rounded border-slate-300"
+                                />
+                                是否有双蛇
+                            </label>
+                            {dualSnake.enabled && (
+                                <div className="space-y-2">
+                                    <div className="text-xs font-semibold text-slate-500">
+                                        双蛇位置
+                                    </div>
+                                    <DualSnakePositionPicker
+                                        teamSize={teamSize}
+                                        value={Math.min(
+                                            dualSnake.personIndex,
+                                            teamSize - 1,
+                                        )}
+                                        onChange={(personIndex) =>
+                                            applyDualSnake({
+                                                enabled: true,
+                                                personIndex,
+                                            })
+                                        }
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -2251,6 +2456,7 @@ export default function Yuan2026L3() {
                                     round.snapshot.roundNumber,
                                 )}
                                 getConstraints={getConstraints}
+                                dualSnakePersonIndex={dualSnakePersonIndex}
                                 onToggle={() => toggleRound(round.id)}
                                 onDelete={() => deleteRound(round.id)}
                                 onPull={(i) => pullSlot(round.id, i)}
@@ -2315,6 +2521,7 @@ export default function Yuan2026L3() {
                             round={round}
                             isBaseRound={index === 0}
                             canDelete={index > 0}
+                            dualSnakePersonIndex={dualSnakePersonIndex}
                             onToggle={() => toggleStage2Round(round.id)}
                             onDelete={() => deleteStage2Round(round.id)}
                             onChangeStartColor={(i) =>

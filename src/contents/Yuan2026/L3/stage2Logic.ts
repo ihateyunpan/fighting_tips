@@ -5,6 +5,7 @@ import {
     applyPulls,
     deriveNextColors,
     enumerateConstrainedPulls,
+    type DualSnakePersonIndex,
     type RoundConstraints,
     type PullPlan,
     type RoundSnapshot,
@@ -74,6 +75,7 @@ export function isSafeLayers(layers: number): boolean {
 export function findAvoidExitPlans(
     snapshot: Stage2RoundSnapshot,
     constraints: RoundConstraints,
+    dualSnakePersonIndex: DualSnakePersonIndex = null,
 ): PullPlan[] {
     const teamSize = snapshot.startColors.length;
     if (constraints.length !== teamSize) return [];
@@ -89,6 +91,7 @@ export function findAvoidExitPlans(
             snapshot.energyMax,
             snapshot.seals,
             false,
+            dualSnakePersonIndex,
         );
         if (allSameColor(nextColors) != null) continue;
         const nextLayers = deriveNextLayers(snapshot.bossLayers, nextColors);
@@ -107,6 +110,7 @@ export function findAvoidExitPlans(
 export function deriveNextStage2Round(
     snapshot: Stage2RoundSnapshot,
     afterColors: SealColor[],
+    dualSnakePersonIndex: DualSnakePersonIndex = null,
 ): Stage2RoundSnapshot {
     const nextColors = deriveNextColors(
         afterColors,
@@ -115,6 +119,7 @@ export function deriveNextStage2Round(
         snapshot.energyMax,
         snapshot.seals,
         false,
+        dualSnakePersonIndex,
     );
     const energy = snapshot.energy >= snapshot.energyMax ? 0 : snapshot.energy;
 

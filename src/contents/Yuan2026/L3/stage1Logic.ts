@@ -82,11 +82,61 @@ export function applyPulls(colors: SealColor[], pulls: number[]): SealColor[] {
     return colors.map((c, i) => advanceColor(c, pulls[i] ?? 0));
 }
 
-function swapIfExists<T>(arr: T[], a: number, b: number): void {
-    if (a >= arr.length || b >= arr.length) return;
-    const t = arr[a]!;
-    arr[a] = arr[b]!;
-    arr[b] = t;
+/**
+ * 双蛇：一人占两个相邻逻辑站位。
+ * `dualSnakePersonIndex` 为 0-based 人序号；`null` 表示无双蛇。
+ * 队伍 n 人、双蛇在人 d 时，逻辑站位共 n+1：
+ * 人 0..d-1 → 站位 0..d-1；人 d → 站位 d 与 d+1；人 d+1..n-1 → 站位 d+2..n。
+ */
+export type DualSnakePersonIndex = number | null;
+
+export function logicalSlotCount(
+    teamSize: number,
+    dualSnakePersonIndex: DualSnakePersonIndex,
+): number {
+    return dualSnakePersonIndex == null ? teamSize : teamSize + 1;
+}
+
+/** 逻辑站位 (0-based) → 人 (0-based) */
+export function personFromLogical(
+    logicalIndex: number,
+    dualSnakePersonIndex: DualSnakePersonIndex,
+): number {
+    if (dualSnakePersonIndex == null) return logicalIndex;
+    const d = dualSnakePersonIndex;
+    if (logicalIndex < d) return logicalIndex;
+    if (logicalIndex <= d + 1) return d;
+    return logicalIndex - 1;
+}
+
+function advanceAtLogical(
+    colors: SealColor[],
+    logicalIndex: number,
+    dualSnakePersonIndex: DualSnakePersonIndex,
+    logicalCount: number,
+): void {
+    if (logicalIndex < 0 || logicalIndex >= logicalCount) return;
+    const person = personFromLogical(logicalIndex, dualSnakePersonIndex);
+    if (person < 0 || person >= colors.length) return;
+    colors[person] = advanceColor(colors[person]!);
+}
+
+/** 按逻辑站位交换；若两端映到同一人（双蛇自交换）则 no-op */
+function swapLogical(
+    colors: SealColor[],
+    a: number,
+    b: number,
+    dualSnakePersonIndex: DualSnakePersonIndex,
+    logicalCount: number,
+): void {
+    if (a < 0 || b < 0 || a >= logicalCount || b >= logicalCount) return;
+    const pa = personFromLogical(a, dualSnakePersonIndex);
+    const pb = personFromLogical(b, dualSnakePersonIndex);
+    if (pa === pb) return;
+    if (pa < 0 || pb < 0 || pa >= colors.length || pb >= colors.length) return;
+    const t = colors[pa]!;
+    colors[pa] = colors[pb]!;
+    colors[pb] = t;
 }
 
 /** 2.5.2：从行动后颜色推导下回合颜色（不修改封印 / 能量） */
@@ -97,27 +147,28 @@ export function deriveNextColors(
     energyMax: number,
     seals: Seals,
     isStage1: boolean,
+    dualSnakePersonIndex: DualSnakePersonIndex = null,
 ): SealColor[] {
     const colors = afterColors.map((c) => advanceColor(c, 1));
-    const n = colors.length;
+    const logicalCount = logicalSlotCount(colors.length, dualSnakePersonIndex);
 
     if (energy < energyMax) {
         if (roundNumber % 2 === 0) {
             for (const i of [0, 2, 4]) {
-                if (i < n) colors[i] = advanceColor(colors[i]!);
+                advanceAtLogical(colors, i, dualSnakePersonIndex, logicalCount);
             }
         }
         if (roundNumber % 3 === 0) {
             for (const i of [1, 3]) {
-                if (i < n) colors[i] = advanceColor(colors[i]!);
+                advanceAtLogical(colors, i, dualSnakePersonIndex, logicalCount);
             }
         }
         if (isStage1) {
-            if (!seals.red) swapIfExists(colors, 1, 2);
-            if (!seals.blue) swapIfExists(colors, 2, 3);
+            if (!seals.red) swapLogical(colors, 1, 2, dualSnakePersonIndex, logicalCount);
+            if (!seals.blue) swapLogical(colors, 2, 3, dualSnakePersonIndex, logicalCount);
             if (!seals.green) {
-                swapIfExists(colors, 0, 1);
-                swapIfExists(colors, 3, 4);
+                swapLogical(colors, 0, 1, dualSnakePersonIndex, logicalCount);
+                swapLogical(colors, 3, 4, dualSnakePersonIndex, logicalCount);
             }
         }
     }
@@ -135,6 +186,7 @@ export function allSameColor(colors: SealColor[]): SealColor | null {
 export function deriveNextRound(
     snapshot: RoundSnapshot,
     afterColors: SealColor[],
+    dualSnakePersonIndex: DualSnakePersonIndex = null,
 ): RoundSnapshot {
     const nextColors = deriveNextColors(
         afterColors,
@@ -143,6 +195,7 @@ export function deriveNextRound(
         snapshot.energyMax,
         snapshot.seals,
         true,
+        dualSnakePersonIndex,
     );
     const energy = snapshot.energy >= snapshot.energyMax ? 0 : snapshot.energy;
 
@@ -238,6 +291,7 @@ export function findShortestElimination(
     snapshot: RoundSnapshot,
     target: SealColor,
     getConstraints: (roundNumber: number) => RoundConstraints,
+    dualSnakePersonIndex: DualSnakePersonIndex = null,
 ): ShortestElimination | null {
     if (!snapshot.seals[target]) return null;
 
@@ -260,7 +314,11 @@ export function findShortestElimination(
 
         for (const pulls of pullOptions) {
             const after = applyPulls(node.snapshot.startColors, pulls);
-            const next = deriveNextRound(node.snapshot, after);
+            const next = deriveNextRound(
+                node.snapshot,
+                after,
+                dualSnakePersonIndex,
+            );
             const firstPulls = node.firstPulls ?? pulls;
             const pathLength = node.depth + 1;
 
