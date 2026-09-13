@@ -10,7 +10,8 @@ export interface EventMeta {
 export const EVENTS = {
     HUI_XIANG_LU: { id: '1', name: '回乡路', active: false },
     DUNGEON_19: { id: '2', name: '十九期地宫', active: false },
-    KPI: { id: '3', name: '夜以继日的绩效考核', active: true },
+    KPI: { id: '3', name: '夜以继日的绩效考核', active: false },
+    YUAN2026: { id: '4', name: '独夜灯影', active: true },
     AGENT: { id: '999', name: '密探', active: true },
 } as const;
 

@@ -28,6 +28,8 @@ export function useLevelToolbar(actions: LevelActions) {
     // 提前解构出 registerActions。
     // 在 LevelProvider 中，registerActions 被 useCallback 包裹，是引用稳定的。
     const registerActions = context?.registerActions;
+    const hasExport = !!actions.onExport;
+    const hasImport = !!actions.onImport;
 
     useEffect(() => {
         // 如果不在 Provider 内部，直接返回
@@ -35,11 +37,11 @@ export function useLevelToolbar(actions: LevelActions) {
 
         const stableActions: LevelActions = {
             // 这里要做一下封装，确保引用稳定
-            onExport: actions.onExport
+            onExport: hasExport
                 ? () => actionsRef.current.onExport!()
                 : undefined,
 
-            onImport: actions.onImport
+            onImport: hasImport
                 ? (data) => actionsRef.current.onImport?.(data)
                 : undefined
         };
@@ -56,7 +58,7 @@ export function useLevelToolbar(actions: LevelActions) {
         // 依赖项只写 registerActions，而不是 context
         // 这样只有当 actions 的"有无"状态改变，或者 registerActions 函数本身改变时才触发
         // 由于 registerActions 是稳定的，所以不会因为 Provider 的重渲染而触发死循环
-    }, [registerActions, !!actions.onExport, !!actions.onImport]);
+    }, [registerActions, hasExport, hasImport]);
 }
 
 
