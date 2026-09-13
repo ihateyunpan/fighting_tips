@@ -839,6 +839,9 @@ function PullRequirementsSection({
 
     return (
         <div className="space-y-3">
+            <p className="text-xs text-slate-500 leading-relaxed">
+                每位输入框：左侧为下拉次数下限，右侧为上限（如 0~1 表示该号位本回合可下拉 0 或 1 次）。
+            </p>
             <div className="overflow-x-auto rounded-lg border border-slate-200">
                 <table className="w-full text-sm border-collapse">
                     <thead>
