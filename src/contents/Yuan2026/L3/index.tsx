@@ -2154,7 +2154,7 @@ export default function Yuan2026L3() {
                 </div>
                 <div className="px-6 py-5 space-y-4 text-sm text-slate-700 leading-relaxed">
                     <p>
-                        在阶段一（<Hl>boss 血量上限 &lt; 2000w</Hl>
+                        在阶段一（<Hl>boss 身上还有剑</Hl>
                         ）时，正常打 boss。
                     </p>
                     <p>
