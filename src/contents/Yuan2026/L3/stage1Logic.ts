@@ -206,7 +206,7 @@ export function deriveNextRound(
         seals.red = false;
     } else if (uniform === 'blue') {
         seals.blue = false;
-    } else if (uniform === 'green') {
+    } else if (uniform === 'green' && seals.green) {
         seals.green = false;
         energyMax = Math.max(1, energyMax - 1);
     }

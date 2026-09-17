@@ -314,6 +314,86 @@ function parseNonNegInt(raw: string): number | null {
     return Math.floor(n);
 }
 
+function commitBoundedInt(
+    raw: string,
+    min: number,
+    max?: number,
+): number | null {
+    const n = parseNonNegInt(raw);
+    if (n == null) return null;
+    let v = Math.max(min, n);
+    if (max !== undefined) v = Math.min(max, v);
+    return v;
+}
+
+function BoundedIntInput({
+    value,
+    min,
+    max,
+    disabled,
+    onChange,
+    className,
+    'aria-label': ariaLabel,
+}: {
+    value: number;
+    min: number;
+    max?: number;
+    disabled?: boolean;
+    onChange: (n: number) => void;
+    className?: string;
+    'aria-label'?: string;
+}) {
+    const [draft, setDraft] = useState<string | null>(null);
+    const display = draft ?? String(value);
+
+    const applyStep = (delta: number) => {
+        const base =
+            draft != null && draft !== ''
+                ? (parseNonNegInt(draft) ?? value)
+                : value;
+        let next = Math.floor(base) + delta;
+        next = Math.max(min, next);
+        if (max !== undefined) next = Math.min(max, next);
+        onChange(next);
+        setDraft(String(next));
+    };
+
+    const commit = (raw: string) => {
+        setDraft(null);
+        const n = commitBoundedInt(raw, min, max);
+        if (n != null) onChange(n);
+    };
+
+    return (
+        <input
+            type="number"
+            min={min}
+            max={max}
+            step={1}
+            disabled={disabled}
+            value={display}
+            aria-label={ariaLabel}
+            onFocus={() => setDraft(String(value))}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={(e) => commit(e.target.value)}
+            onKeyDown={(e) => {
+                if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    applyStep(1);
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    applyStep(-1);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commit(e.currentTarget.value);
+                    e.currentTarget.blur();
+                }
+            }}
+            className={className}
+        />
+    );
+}
+
 // --- 小组件 ---
 
 function SealIcons({ seals }: { seals: Seals }) {
@@ -409,30 +489,18 @@ function SlotConstraintEditor({
 }) {
     return (
         <div className="flex items-center gap-1 min-w-[6.5rem]">
-            <input
-                type="number"
-                min={0}
-                step={1}
+            <BoundedIntInput
                 value={value.min}
-                onChange={(e) => {
-                    const n = parseNonNegInt(e.target.value);
-                    if (n == null) return;
-                    onChange({ min: n, max: Math.max(n, value.max) });
-                }}
+                min={0}
+                onChange={(n) => onChange({ min: n, max: Math.max(n, value.max) })}
                 className="w-full rounded-md border border-slate-200 px-1.5 py-1 font-mono text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
                 aria-label="最小下拉次数"
             />
             <span className="text-slate-400 text-xs shrink-0">~</span>
-            <input
-                type="number"
-                min={0}
-                step={1}
+            <BoundedIntInput
                 value={value.max}
-                onChange={(e) => {
-                    const n = parseNonNegInt(e.target.value);
-                    if (n == null) return;
-                    onChange({ min: Math.min(value.min, n), max: n });
-                }}
+                min={0}
+                onChange={(n) => onChange({ min: Math.min(value.min, n), max: n })}
                 className="w-full rounded-md border border-slate-200 px-1.5 py-1 font-mono text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
                 aria-label="最大下拉次数"
             />
@@ -771,15 +839,10 @@ function NumberField({
             {disabled || !onChange ? (
                 <span className="font-mono font-bold text-slate-800">{value}</span>
             ) : (
-                <input
-                    type="number"
-                    min={min}
+                <BoundedIntInput
                     value={value}
-                    onChange={(e) => {
-                        const n = Number(e.target.value);
-                        if (!Number.isFinite(n)) return;
-                        onChange(Math.max(min, Math.floor(n)));
-                    }}
+                    min={min}
+                    onChange={onChange}
                     className="w-16 rounded-md border border-slate-200 px-2 py-1 font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
                 />
             )}
