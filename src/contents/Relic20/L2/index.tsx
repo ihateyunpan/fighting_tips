@@ -104,9 +104,9 @@ function MechanismPanel() {
                     <span className="font-semibold text-violet-700">书清零</span>
                     ，
                     <span className="font-semibold text-amber-700">剑 +1</span>
-                    ；孙静
+                    ；孙静行动时，如果
                     <span className="font-semibold text-slate-900">不满能量</span>
-                    时，如果
+                    且
                     <span className="font-semibold text-amber-700">剑 &gt; 0</span>
                     ，
                     <span className="font-semibold text-violet-700">书 +1</span>
