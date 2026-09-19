@@ -12,6 +12,7 @@ export const EVENTS = {
     DUNGEON_19: { id: '2', name: '十九期地宫', active: false },
     KPI: { id: '3', name: '夜以继日的绩效考核', active: false },
     YUAN2026: { id: '4', name: '独夜灯影', active: true },
+    DUNGEON23: { id: '5', name: '二十三期地宫', active: true },
     AGENT: { id: '999', name: '密探', active: true },
 } as const;
 

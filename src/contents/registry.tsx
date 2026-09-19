@@ -11,6 +11,7 @@ const KpiZhuGeLiang = lazy(() => import('./Kpi/ZhuGeLiang/ZhuGeLiang.tsx'));
 const KpiXunYou = lazy(() => import('./Kpi/XunYou'));
 const Yuan2026L3 = lazy(() => import('./Yuan2026/L3'));
 const Yuan2026L5 = lazy(() => import('./Yuan2026/L5'));
+const Relic20L2 = lazy(() => import('./Relic20/L2'));
 
 // 404 组件
 const NotFound = () => (
@@ -30,6 +31,7 @@ const contentMap: Record<string, LazyComponent> = {
     '4': KpiXunYou,
     '5': Yuan2026L5,
     '6': Yuan2026L3,
+    '7': Relic20L2,
     '999': FaZheng,
 };
 
