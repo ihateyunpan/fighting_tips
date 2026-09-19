@@ -42,12 +42,14 @@ export interface RoundTrace {
     round: number;
     /** 回合开始时 1–4 号能量 */
     startEnergy: Energy;
+    /** 本回合结算后的能量，即下回合开始时的分布 */
+    nextEnergy: Energy;
     /** 1-based，升序，仅用于展示 */
     killed: number[];
     actions: MobAction[];
     sword: number;
     book: number;
-    /** 回合 1–3 且剑 > 0，结算时书实际加了 1 */
+    /** 孙静不满能量且剑 > 0，结算时书实际加了 1 */
     bookFromSword: boolean;
 }
 
@@ -80,18 +82,20 @@ function applyAction(state: SimState, mob: number) {
     }
 }
 
+interface SettledRound {
+    state: SimState;
+    startEnergy: Energy;
+    killed: number[];
+    actions: MobAction[];
+    bookFromSword: boolean;
+}
+
 /**
- * 本回合被击杀的小怪不行动，能量停在被击杀时（即回合开始时）。
- * 回合结束后复活，下一回合仍以该能量在场。
- * 未被击杀者行动后，每个回合结束能量 +1。
- * 回合 1–3 且剑 > 0 时书额外 +1。
+ * ②④ 水：行动后书 +1。①③ 火：书 ≥ 2 则书清零、剑 +1。
+ * 被击杀者不行动，能量停在回合开始时；未击杀者行动后能量 +1（满能量先行动 2 次并清零）。
+ * 孙静不满能量且结算后剑 > 0 时，书再 +1。
  */
-function resolveRound(
-    state: SimState,
-    killed: readonly number[],
-    round: number,
-    target: number,
-): { state: SimState; trace: RoundTrace } | null {
+function settleRound(state: SimState, killed: readonly number[], fullEnergy: boolean): SettledRound {
     const next = cloneState(state);
     const startEnergy = cloneEnergy(next.energy);
     const killedSet = new Set(killed);
@@ -108,14 +112,10 @@ function resolveRound(
     }
 
     let bookFromSword = false;
-    if (round < ROUND_COUNT) {
-        if (next.sword > 0) {
-            const before = next.book;
-            next.book = Math.min(BOOK_MAX, next.book + 1);
-            bookFromSword = next.book !== before;
-        }
-    } else if (next.sword * next.book !== target) {
-        return null;
+    if (!fullEnergy && next.sword > 0) {
+        const before = next.book;
+        next.book = Math.min(BOOK_MAX, next.book + 1);
+        bookFromSword = next.book !== before;
     }
 
     for (let mob = 1; mob <= MOB_COUNT; mob++) {
@@ -126,14 +126,89 @@ function resolveRound(
 
     return {
         state: next,
+        startEnergy,
+        killed: [...killed].sort((a, b) => a - b),
+        actions,
+        bookFromSword,
+    };
+}
+
+/** 击杀组合：先按个数 0–4，同个数按小怪编号升序。 */
+function killSubsets(): number[][] {
+    const out: number[][] = [];
+    const buf: number[] = [];
+    const walk = (start: number, size: number) => {
+        if (buf.length === size) {
+            out.push([...buf]);
+            return;
+        }
+        for (let mob = start; mob <= MOB_COUNT; mob++) {
+            buf.push(mob);
+            walk(mob + 1, size);
+            buf.pop();
+        }
+    };
+    for (let size = 0; size <= MOB_COUNT; size++) walk(1, size);
+    return out;
+}
+
+export interface KillInference {
+    killed: number[];
+    sword: number;
+    book: number;
+    nextEnergy: Energy;
+    bookFromSword: boolean;
+}
+
+/** 本回合全部击杀组合的剑、书、下回合能量。满能量时不加「剑>0 则书+1」。 */
+export function inferRound(input: {
+    energy: Energy;
+    sword: number;
+    book: number;
+    fullEnergy: boolean;
+}): KillInference[] {
+    return killSubsets().map((killed) => {
+        const settled = settleRound(
+            { energy: input.energy, sword: input.sword, book: input.book },
+            killed,
+            input.fullEnergy,
+        );
+        return {
+            killed: settled.killed,
+            sword: settled.state.sword,
+            book: settled.state.book,
+            nextEnergy: cloneEnergy(settled.state.energy),
+            bookFromSword: settled.bookFromSword,
+        };
+    });
+}
+
+/**
+ * 本回合被击杀的小怪不行动，能量停在被击杀时（即回合开始时）。
+ * 回合结束后复活，下一回合仍以该能量在场。
+ * 周期第 4 回合视为孙静满能量，且剑×书必须等于目标回合数。
+ */
+function resolveRound(
+    state: SimState,
+    killed: readonly number[],
+    round: number,
+    target: number,
+): { state: SimState; trace: RoundTrace } | null {
+    const fullEnergy = round === ROUND_COUNT;
+    const settled = settleRound(state, killed, fullEnergy);
+    if (fullEnergy && settled.state.sword * settled.state.book !== target) return null;
+
+    return {
+        state: settled.state,
         trace: {
             round,
-            startEnergy,
-            killed: [...killed].sort((a, b) => a - b),
-            actions,
-            sword: next.sword,
-            book: next.book,
-            bookFromSword,
+            startEnergy: settled.startEnergy,
+            nextEnergy: cloneEnergy(settled.state.energy),
+            killed: settled.killed,
+            actions: settled.actions,
+            sword: settled.state.sword,
+            book: settled.state.book,
+            bookFromSword: settled.bookFromSword,
         },
     };
 }

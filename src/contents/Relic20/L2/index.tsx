@@ -1,34 +1,50 @@
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
 import {
+    BOOK_MAX,
     cycleCount,
     findPlan,
+    inferRound,
+    SWORD_MAX,
     TARGET_ROUNDS,
     type Energy,
     type TargetRound,
 } from './logic';
 
 const ENERGY_OPTIONS = [0, 1, 2, 3];
+const SWORD_OPTIONS = Array.from({ length: SWORD_MAX + 1 }, (_, i) => i);
+const BOOK_OPTIONS = Array.from({ length: BOOK_MAX + 1 }, (_, i) => i);
 const KILL_COUNT_OPTIONS = [0, 1, 2, 3, 4];
-const MOB_MARK = ['①', '②', '③', '④'] as const;
+/** ①③ 火，②④ 水 */
+const MOBS = [
+    { mark: '①', element: '火', tone: 'text-orange-600', badge: 'bg-orange-600' },
+    { mark: '②', element: '水', tone: 'text-sky-600', badge: 'bg-sky-600' },
+    { mark: '③', element: '火', tone: 'text-orange-600', badge: 'bg-orange-600' },
+    { mark: '④', element: '水', tone: 'text-sky-600', badge: 'bg-sky-600' },
+] as const;
+const MOB_MARK = MOBS.map((m) => m.mark);
+const FULL_ENERGY_OPTIONS = ['不满', '满'] as const;
 
 function allCountsAllowed(): boolean[][] {
     return Array.from({ length: 4 }, () => KILL_COUNT_OPTIONS.map(() => true));
 }
 
-function Segmented({
+function Segmented<T extends string | number>({
                        options,
                        isOn,
                        onPick,
                        mode,
                        label,
                        isDisabled,
+                       format = (value) => String(value),
                    }: {
-    options: readonly number[];
-    isOn: (value: number) => boolean;
-    onPick: (value: number) => void;
+    options: readonly T[];
+    isOn: (value: T) => boolean;
+    onPick: (value: T) => void;
     mode: 'single' | 'multi';
     label: string;
-    isDisabled?: (value: number) => boolean;
+    isDisabled?: (value: T) => boolean;
+    format?: (value: T) => string;
 }) {
     return (
         <div
@@ -55,7 +71,7 @@ function Segmented({
                                     : 'bg-white text-slate-600 hover:bg-slate-50'
                         }`}
                     >
-                        {value}
+                        {format(value)}
                     </button>
                 );
             })}
@@ -67,19 +83,57 @@ function RoundMark({ children }: { children: number }) {
     return <span className="font-bold text-indigo-700 tabular-nums">{children}</span>;
 }
 
+function SectionTitle({ children }: { children: string }) {
+    return <h2 className="text-base font-bold text-slate-900">{children}</h2>;
+}
+
+function MechanismPanel() {
+    return (
+        <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2.5 text-sm leading-relaxed text-slate-700">
+            <p className="font-bold text-slate-900">机制要求</p>
+            <ol className="mt-1.5 list-decimal space-y-1.5 pl-5">
+                <li>
+                    <span className="font-semibold text-sky-700">水小怪</span>
+                    （②④）行动后，孙静
+                    <span className="font-semibold text-violet-700">书 +1</span>
+                    ；
+                    <span className="font-semibold text-orange-700">火小怪</span>
+                    （①③）行动后，如果
+                    <span className="font-semibold text-violet-700">书 ≥ 2</span>
+                    ，
+                    <span className="font-semibold text-violet-700">书清零</span>
+                    ，
+                    <span className="font-semibold text-amber-700">剑 +1</span>
+                    ；孙静
+                    <span className="font-semibold text-slate-900">不满能量</span>
+                    时，如果
+                    <span className="font-semibold text-amber-700">剑 &gt; 0</span>
+                    ，
+                    <span className="font-semibold text-violet-700">书 +1</span>
+                    。
+                </li>
+                <li>
+                    回合
+                    <RoundMark>{4}</RoundMark>、<RoundMark>{8}</RoundMark>、<RoundMark>{12}</RoundMark>、
+                    <RoundMark>{16}</RoundMark>
+                    时，孙静行动时，
+                    <span className="font-semibold text-amber-700">剑数量 × 书数量 = 回合数</span>
+                    。
+                </li>
+                <li>
+                    击杀孙静时，孙静必须
+                    <span className="font-semibold text-rose-600">剑 ≥ 2</span>
+                    。
+                </li>
+            </ol>
+        </div>
+    );
+}
+
 function UsagePanel() {
     return (
         <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2.5 text-sm leading-relaxed text-slate-700">
-            <p>
-                <span className="font-bold text-slate-900">机制要求：</span>
-                回合
-                <RoundMark>{4}</RoundMark>、<RoundMark>{8}</RoundMark>、<RoundMark>{12}</RoundMark>、
-                <RoundMark>{16}</RoundMark>
-                时，孙静行动时，
-                <span className="font-semibold text-amber-700">剑数量 × 书数量 = 回合数</span>
-                。
-            </p>
-            <ol className="mt-2 list-decimal space-y-1 pl-5 text-slate-600">
+            <ol className="list-decimal space-y-1 pl-5 text-slate-600">
                 <li>
                     指定你要模拟的
                     <span className="font-semibold text-slate-900">回合范围</span>
@@ -120,6 +174,152 @@ function UsagePanel() {
     );
 }
 
+function formatEnergy(energy: readonly number[]): string {
+    return energy.map((value, index) => `${MOB_MARK[index]}${value}`).join(' ');
+}
+
+function patchEnergy(prev: Energy, index: number, value: number): Energy {
+    const next: Energy = [prev[0], prev[1], prev[2], prev[3]];
+    next[index] = value;
+    return next;
+}
+
+function SingleRound() {
+    const [open, setOpen] = useState(false);
+    const [energy, setEnergy] = useState<Energy>([1, 1, 1, 1]);
+    const [sword, setSword] = useState(0);
+    const [book, setBook] = useState(0);
+    const [fullEnergy, setFullEnergy] = useState(false);
+
+    const rows = useMemo(
+        () => (open ? inferRound({ energy, sword, book, fullEnergy }) : []),
+        [open, energy, sword, book, fullEnergy],
+    );
+
+    return (
+        <section className="space-y-3">
+            <button
+                type="button"
+                onClick={() => setOpen((prev) => !prev)}
+                className="flex items-center gap-1 text-left"
+                aria-expanded={open}
+            >
+                {open ? (
+                    <ChevronDown size={18} className="shrink-0 text-slate-400" />
+                ) : (
+                    <ChevronRight size={18} className="shrink-0 text-slate-400" />
+                )}
+                <SectionTitle>单回合推断器</SectionTitle>
+                <span className="ml-1 text-xs font-normal text-slate-400">
+                    {open ? '收起' : '展开'}
+                </span>
+            </button>
+            {open && (
+            <>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <span className="text-xs font-semibold text-slate-500">本回合开始时的小怪能量</span>
+                {energy.map((value, index) => (
+                    <label key={index} className="inline-flex items-center gap-1.5">
+                        <span className="inline-flex min-w-7 flex-col items-center leading-none">
+                            <span className="text-xs text-slate-500">{MOBS[index].mark}</span>
+                            <span className={`text-[10px] font-semibold ${MOBS[index].tone}`}>
+                                {MOBS[index].element}
+                            </span>
+                        </span>
+                        <Segmented
+                            options={ENERGY_OPTIONS}
+                            mode="single"
+                            label={`小怪${MOBS[index].mark}能量`}
+                            isOn={(n) => n === value}
+                            onPick={(n) => setEnergy((prev) => patchEnergy(prev, index, n))}
+                        />
+                    </label>
+                ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label className="inline-flex items-center gap-1.5">
+                    <span className="text-xs font-semibold text-slate-500">剑</span>
+                    <Segmented
+                        options={SWORD_OPTIONS}
+                        mode="single"
+                        label="剑个数"
+                        isOn={(n) => n === sword}
+                        onPick={setSword}
+                    />
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                    <span className="text-xs font-semibold text-slate-500">书</span>
+                    <Segmented
+                        options={BOOK_OPTIONS}
+                        mode="single"
+                        label="书个数"
+                        isOn={(n) => n === book}
+                        onPick={setBook}
+                    />
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                    <span className="text-xs font-semibold text-slate-500">孙静能量</span>
+                    <Segmented
+                        options={FULL_ENERGY_OPTIONS}
+                        mode="single"
+                        label="孙静是否满能量"
+                        isOn={(n) => (n === '满') === fullEnergy}
+                        onPick={(n) => setFullEnergy(n === '满')}
+                    />
+                </label>
+            </div>
+            <div className="overflow-hidden rounded-lg border border-slate-200">
+                <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-left text-xs">
+                        <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500">
+                            <th className="px-3 py-1.5 font-medium">击杀</th>
+                            <th className="px-3 py-1.5 font-medium">剑</th>
+                            <th className="px-3 py-1.5 font-medium">书</th>
+                            <th className="px-3 py-1.5 font-medium">下回合开始能量</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {rows.map((row) => (
+                            <tr key={row.killed.join(',') || 'none'} className="border-b border-slate-100 last:border-0">
+                                <td className="px-3 py-2 align-middle">
+                                    {row.killed.length === 0 ? (
+                                        <span className="text-sm text-slate-300">无</span>
+                                    ) : (
+                                        <span className="inline-flex gap-1">
+                                            {row.killed.map((mob) => (
+                                                <span
+                                                    key={mob}
+                                                    className={`inline-flex h-8 min-w-8 items-center justify-center rounded-md text-lg font-bold leading-none text-white ${MOBS[mob - 1].badge}`}
+                                                >
+                                                    {MOB_MARK[mob - 1]}
+                                                </span>
+                                            ))}
+                                        </span>
+                                    )}
+                                </td>
+                                <td className="px-3 py-2 font-mono align-middle">{row.sword}</td>
+                                <td className="px-3 py-2 font-mono whitespace-nowrap align-middle">
+                                    {row.book}
+                                    {row.bookFromSword && (
+                                        <span className="ml-1 text-[10px] font-sans text-slate-400">剑&gt;0</span>
+                                    )}
+                                </td>
+                                <td className="px-3 py-2 font-mono whitespace-nowrap align-middle">
+                                    {formatEnergy(row.nextEnergy)}
+                                </td>
+                            </tr>
+                        ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            </>
+            )}
+        </section>
+    );
+}
+
 /** 第 roundIndex（0–3）行对应的实际回合号，跨多个周期时用 / 连接。 */
 function cycleRoundLabel(targetStart: TargetRound, targetEnd: TargetRound, roundIndex: number): string {
     const cycles = cycleCount(targetStart, targetEnd);
@@ -149,11 +349,7 @@ export default function SunJing() {
     const emptyRound = allowed.findIndex((row) => !row.some(Boolean));
 
     const setMobEnergy = (index: number, value: number) => {
-        setEnergy((prev) => {
-            const next: Energy = [prev[0], prev[1], prev[2], prev[3]];
-            next[index] = value;
-            return next;
-        });
+        setEnergy((prev) => patchEnergy(prev, index, value));
     };
 
     const toggleCount = (roundIndex: number, count: number) => {
@@ -169,6 +365,10 @@ export default function SunJing() {
 
     return (
         <div className="space-y-4 text-sm text-slate-800">
+            <MechanismPanel />
+            <SingleRound />
+            <section className="space-y-3">
+            <SectionTitle>多回合推断器</SectionTitle>
             <UsagePanel />
 
             <div className="space-y-1.5">
@@ -213,11 +413,16 @@ export default function SunJing() {
                 </span>
                 {energy.map((value, index) => (
                     <label key={index} className="inline-flex items-center gap-1.5">
-                        <span className="w-4 text-center text-xs text-slate-500">{MOB_MARK[index]}</span>
+                        <span className="inline-flex min-w-7 flex-col items-center leading-none">
+                            <span className="text-xs text-slate-500">{MOBS[index].mark}</span>
+                            <span className={`text-[10px] font-semibold ${MOBS[index].tone}`}>
+                                {MOBS[index].element}
+                            </span>
+                        </span>
                         <Segmented
                             options={ENERGY_OPTIONS}
                             mode="single"
-                            label={`小怪${MOB_MARK[index]}能量`}
+                            label={`小怪${MOBS[index].mark}能量`}
                             isOn={(n) => n === value}
                             onPick={(n) => setMobEnergy(index, n)}
                         />
@@ -275,6 +480,7 @@ export default function SunJing() {
                                 <th className="px-3 py-1.5 font-medium">小怪行动次数</th>
                                 <th className="px-3 py-1.5 font-medium">剑</th>
                                 <th className="px-3 py-1.5 font-medium">书</th>
+                                <th className="px-3 py-1.5 font-medium">下回合开始能量</th>
                             </tr>
                             </thead>
                             <tbody>
@@ -283,7 +489,7 @@ export default function SunJing() {
                                     {plan.length > 4 && index % 4 === 0 && (
                                         <tr className="bg-slate-50">
                                             <td
-                                                colSpan={6}
+                                                colSpan={7}
                                                 className="px-3 py-1.5 text-[11px] font-semibold text-slate-500"
                                             >
                                                 回合 {row.round}–{row.round + 3} · 剑×书 ={' '}
@@ -304,7 +510,7 @@ export default function SunJing() {
                                                     {row.killed.map((mob) => (
                                                         <span
                                                             key={mob}
-                                                            className="inline-flex h-8 min-w-8 items-center justify-center rounded-md bg-rose-600 text-lg font-bold leading-none text-white"
+                                                            className={`inline-flex h-8 min-w-8 items-center justify-center rounded-md text-lg font-bold leading-none text-white ${MOBS[mob - 1].badge}`}
                                                         >
                                                             {MOB_MARK[mob - 1]}
                                                         </span>
@@ -325,6 +531,9 @@ export default function SunJing() {
                                                     className="ml-1 text-[10px] font-sans text-slate-400">剑&gt;0</span>
                                             )}
                                         </td>
+                                        <td className="px-3 py-2 font-mono whitespace-nowrap align-middle">
+                                            {row.nextEnergy.map((value, index) => `${MOB_MARK[index]}${value}`).join(' ')}
+                                        </td>
                                     </tr>
                                 </Fragment>
                             ))}
@@ -341,6 +550,7 @@ export default function SunJing() {
                     </div>
                 )}
             </div>
+            </section>
         </div>
     );
 }
