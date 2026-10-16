@@ -79,11 +79,11 @@ function ShieldButtons({
     shields: number[];
 }) {
     return (
-        <div className="inline-flex flex-wrap gap-1">
+        <div className="inline-flex flex-nowrap gap-1">
             {shields.map((layer, index) => (
                 <span
                     key={index}
-                    className={`inline-flex min-w-8 items-center justify-center rounded border px-2 py-1 text-sm font-mono tabular-nums ${
+                    className={`inline-flex min-w-8 shrink-0 items-center justify-center rounded border px-2 py-1 text-sm font-mono tabular-nums ${
                         layer > 0
                             ? 'border-red-300 bg-red-50 text-red-700 font-semibold'
                             : 'border-slate-200 bg-slate-50 text-slate-600'
@@ -286,7 +286,7 @@ export default function HalfAnniversary2026Pond() {
     return (
         <div className="space-y-2">
             <CompactCollapsible
-                title="阶段一"
+                title="阶段一 / 阶段二"
                 open={stageOneOpen}
                 onToggle={() => setStageOneOpen((v) => !v)}
                 info={<UsagePanel />}
@@ -361,7 +361,7 @@ export default function HalfAnniversary2026Pond() {
                                     <td className="px-3 py-1.5 font-mono text-slate-800">
                                         {formatBossEnergy(row.bossEnergy)}
                                     </td>
-                                    <td className="px-3 py-1.5">
+                                    <td className="px-3 py-1.5 whitespace-nowrap">
                                         <ShieldButtons shields={row.shields} />
                                     </td>
                                     <td className="px-3 py-1.5">

@@ -248,7 +248,11 @@ export function rowsToInputs(rows: RoundRow[]): RoundInput[] {
         }));
 }
 
-/** Recompute display rows from draft inputs (last row may be open) */
+/**
+ * Recompute display rows from draft inputs (last row may be open).
+ * Each row's shields are the start-of-round state from prior rounds only;
+ * the current draft's red circle / specials never rewrite that row's shields.
+ */
 export function computeRowsFromDrafts(teamSize: number, drafts: RowDraft[]): RoundRow[] {
     if (drafts.length === 0) {
         return [createInitialRow(teamSize)];
@@ -267,6 +271,7 @@ export function computeRowsFromDrafts(teamSize: number, drafts: RowDraft[]): Rou
             break;
         }
 
+        // Shields freeze at round creation (derived from previous rounds only).
         const row: RoundRow = {
             round: state.round,
             bossEnergy: state.bossEnergy,
@@ -284,7 +289,6 @@ export function computeRowsFromDrafts(teamSize: number, drafts: RowDraft[]): Rou
 
         const after = processRound(state, teamSize, { redCircle, specials });
         if (!isLast) {
-            row.shields = after.shields.slice();
             row.wiped = after.wiped;
         }
         result.push(row);
