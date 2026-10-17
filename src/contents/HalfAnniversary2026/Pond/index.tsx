@@ -286,7 +286,7 @@ export default function HalfAnniversary2026Pond() {
     return (
         <div className="space-y-2">
             <CompactCollapsible
-                title="阶段一 / 阶段二"
+                title="阶段一~阶段三"
                 open={stageOneOpen}
                 onToggle={() => setStageOneOpen((v) => !v)}
                 info={<UsagePanel />}
