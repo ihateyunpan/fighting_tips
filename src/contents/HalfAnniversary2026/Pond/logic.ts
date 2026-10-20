@@ -327,6 +327,51 @@ export function deleteDraftFrom(drafts: RowDraft[], index: number): RowDraft[] {
     return kept;
 }
 
+/** Row at index is round n: drop rounds ≥ n+2 and clear round n+1 red circle. */
+export function resetLockedRound(drafts: RowDraft[], index: number): RowDraft[] {
+    if (index < 0 || index >= drafts.length) {
+        return drafts;
+    }
+    const kept = drafts.slice(0, index + 2);
+    if (kept.length === 0) {
+        return [{ redCircle: null, specials: { ...DEFAULT_SPECIALS } }];
+    }
+    if (kept.length > index + 1) {
+        const nextRow = kept[index + 1];
+        kept[index + 1] = {
+            redCircle: null,
+            specials: { ...nextRow.specials },
+        };
+        return kept;
+    }
+    return [...kept, { redCircle: null, specials: { ...DEFAULT_SPECIALS } }];
+}
+
+export function setRedCircleOnDraft(
+    drafts: RowDraft[],
+    index: number,
+    pos: number,
+    teamSize: number,
+): RowDraft[] {
+    if (index < 0 || index >= drafts.length) {
+        return drafts;
+    }
+    let next = drafts.map((d, i) => {
+        if (i !== index) {
+            return { redCircle: d.redCircle, specials: { ...d.specials } };
+        }
+        return { redCircle: pos, specials: { ...d.specials } };
+    });
+    next = next.slice(0, index + 2);
+    if (next.length > index + 1) {
+        next[index + 1] = {
+            redCircle: null,
+            specials: { ...next[index + 1].specials },
+        };
+    }
+    return appendRoundDraft(next, teamSize);
+}
+
 export function updateLastDraft(
     drafts: RowDraft[],
     patch: Partial<RowDraft> & { specials?: Partial<SpecialFlags> },

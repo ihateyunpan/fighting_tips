@@ -1,20 +1,45 @@
-import { ChevronDown, ChevronUp, Shield, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, RotateCcw, Shield } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import {
-    appendRoundDraft,
     changeTeamSize,
     completedInputsBeforeRow,
     computeRowsFromDrafts,
     DEFAULT_SPECIALS,
-    deleteDraftFrom,
     formatBossEnergy,
+    resetLockedRound,
+    setRedCircleOnDraft,
     isFullBossEnergy,
     safeRedCircleOptions,
     TEAM_SIZE_MAX,
     TEAM_SIZE_MIN,
     type RowDraft,
-    updateLastDraft,
+    type SpecialFlags,
 } from './logic';
+
+function isDraftRowEditable(drafts: RowDraft[], index: number): boolean {
+    return drafts[index + 1]?.redCircle == null;
+}
+
+function updateDraftAt(
+    drafts: RowDraft[],
+    index: number,
+    patch: Partial<RowDraft> & { specials?: Partial<SpecialFlags> },
+): RowDraft[] {
+    if (index < 0 || index >= drafts.length) {
+        return drafts;
+    }
+    return drafts.map((d, i) => {
+        if (i !== index) {
+            return { redCircle: d.redCircle, specials: { ...d.specials } };
+        }
+        return {
+            redCircle: patch.redCircle !== undefined ? patch.redCircle : d.redCircle,
+            specials: patch.specials
+                ? { ...d.specials, ...patch.specials }
+                : { ...d.specials },
+        };
+    });
+}
 
 const TEAM_SIZE_OPTIONS = Array.from(
     { length: TEAM_SIZE_MAX - TEAM_SIZE_MIN + 1 },
@@ -198,9 +223,10 @@ function UsagePanel() {
                     </li>
                     <li>
                         <span className="font-semibold text-indigo-700">⑤</span>{' '}
-                        点
-                        <span className="font-mono font-bold text-indigo-700">+</span>{' '}
-                        新建回合
+                        选中红圈后会
+                        <span className="font-semibold text-slate-900">自动新建下一回合</span>
+                        ；下一回合也选好红圈后，本回合将
+                        <span className="font-semibold text-slate-900">无法再改</span>
                     </li>
                 </ol>
             </div>
@@ -253,32 +279,40 @@ export default function HalfAnniversary2026Pond() {
         [teamSize, drafts],
     );
 
-    const lastIndex = rows.length - 1;
-
     const handleTeamSize = (size: number) => {
         const next = changeTeamSize(size);
         setTeamSize(next.teamSize);
         setDrafts(next.drafts);
     };
 
-    const handleAdd = () => {
-        setDrafts((prev) => appendRoundDraft(prev, teamSize));
+    const handleReset = (index: number) => {
+        setDrafts((prev) => resetLockedRound(prev, index));
     };
 
-    const handleDelete = (index: number) => {
-        setDrafts((prev) => deleteDraftFrom(prev, index));
-    };
-
-    const handleRedCircle = (pos: number) => {
-        setDrafts((prev) => updateLastDraft(prev, { redCircle: pos }));
-    };
-
-    const handleSpecial = (key: 'chant' | 'silence' | 'def3', value: boolean) => {
+    const handleRedCircle = (index: number, pos: number) => {
         setDrafts((prev) => {
-            const last = prev[prev.length - 1];
-            if (!last) return prev;
-            return updateLastDraft(prev, {
-                specials: { ...last.specials, [key]: value },
+            if (!isDraftRowEditable(prev, index)) {
+                return prev;
+            }
+            return setRedCircleOnDraft(prev, index, pos, teamSize);
+        });
+    };
+
+    const handleSpecial = (
+        index: number,
+        key: 'chant' | 'silence' | 'def3',
+        value: boolean,
+    ) => {
+        setDrafts((prev) => {
+            if (!isDraftRowEditable(prev, index)) {
+                return prev;
+            }
+            const row = prev[index];
+            if (!row) {
+                return prev;
+            }
+            return updateDraftAt(prev, index, {
+                specials: { ...row.specials, [key]: value },
             });
         });
     };
@@ -324,26 +358,20 @@ export default function HalfAnniversary2026Pond() {
                     </thead>
                     <tbody>
                         {rows.map((row, index) => {
-                            const isLast = index === lastIndex;
+                            const editable =
+                                isDraftRowEditable(drafts, index) && !row.wiped;
                             const positionOptions = Array.from(
                                 { length: teamSize },
                                 (_, i) => i + 1,
                             );
                             const completed = completedInputsBeforeRow(rows, index);
-                            const safeFlags = isLast
+                            const safeFlags = editable
                                 ? safeRedCircleOptions(
                                       teamSize,
                                       completed,
                                       row.specials,
                                   )
                                 : [];
-                            const redIdx =
-                                row.redCircle != null ? row.redCircle - 1 : -1;
-                            const canAdd =
-                                isLast &&
-                                row.redCircle != null &&
-                                !row.wiped &&
-                                (safeFlags[redIdx] ?? false);
 
                             return (
                                 <tr
@@ -371,25 +399,25 @@ export default function HalfAnniversary2026Pond() {
                                                     label="沉吟"
                                                     checked={row.specials.chant}
                                                     onChange={(v) =>
-                                                        isLast && handleSpecial('chant', v)
+                                                        handleSpecial(index, 'chant', v)
                                                     }
-                                                    disabled={!isLast}
+                                                    disabled={!editable}
                                                 />
                                                 <SpecialToggle
                                                     label="沉默"
                                                     checked={row.specials.silence}
                                                     onChange={(v) =>
-                                                        isLast && handleSpecial('silence', v)
+                                                        handleSpecial(index, 'silence', v)
                                                     }
-                                                    disabled={!isLast}
+                                                    disabled={!editable}
                                                 />
                                                 <SpecialToggle
                                                     label="≥3人防御"
                                                     checked={row.specials.def3}
                                                     onChange={(v) =>
-                                                        isLast && handleSpecial('def3', v)
+                                                        handleSpecial(index, 'def3', v)
                                                     }
-                                                    disabled={!isLast}
+                                                    disabled={!editable}
                                                     icon={
                                                         <Shield
                                                             size={12}
@@ -403,11 +431,13 @@ export default function HalfAnniversary2026Pond() {
                                         )}
                                     </td>
                                     <td className="px-3 py-1.5">
-                                        {isLast ? (
+                                        {editable ? (
                                             <Segmented
                                                 options={positionOptions}
                                                 value={row.redCircle}
-                                                onPick={handleRedCircle}
+                                                onPick={(pos) =>
+                                                    handleRedCircle(index, pos)
+                                                }
                                                 isOptionDisabled={(pos) => {
                                                     const idx = pos - 1;
                                                     return safeFlags[idx] === false;
@@ -426,27 +456,16 @@ export default function HalfAnniversary2026Pond() {
                                         )}
                                     </td>
                                     <td className="px-3 py-1.5">
-                                        <div className="flex items-center gap-1">
-                                            {isLast ? (
-                                                <button
-                                                    type="button"
-                                                    onClick={handleAdd}
-                                                    disabled={!canAdd}
-                                                    className="px-2.5 py-1 rounded border border-slate-200 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed"
-                                                    aria-label="进入下一回合"
-                                                >
-                                                    +
-                                                </button>
-                                            ) : null}
+                                        {!editable ? (
                                             <button
                                                 type="button"
-                                                onClick={() => handleDelete(index)}
-                                                className="p-1 rounded border border-slate-200 text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
-                                                aria-label="删除本行及之后"
+                                                onClick={() => handleReset(index)}
+                                                className="p-1 rounded border border-slate-200 text-slate-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200"
+                                                aria-label="重置此回合及之后"
                                             >
-                                                <Trash2 size={14} />
+                                                <RotateCcw size={14} />
                                             </button>
-                                        </div>
+                                        ) : null}
                                     </td>
                                 </tr>
                             );
