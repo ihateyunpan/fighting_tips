@@ -175,6 +175,11 @@ interface ResultRow {
     bottle: number | null;
 }
 
+/** Stable key: same attr+prof sequence (order matters) => one row. */
+function assignmentKey(elements: ElementType[], professions: ProfessionType[]): string {
+    return JSON.stringify({ e: elements, p: professions });
+}
+
 /** Per battle slot (1..n column): optional attr/prof filter for the result table only. */
 interface SlotDisplayFilter {
     element: ElementType | null;
@@ -388,12 +393,16 @@ export default function Zuo2026TeamBuilder() {
         }
 
         const out: ResultRow[] = [];
+        const seenAssignments = new Set<string>();
         let count = 0;
         let truncated = false;
         for (const { elements, professions } of enumerateAssignments(activeSlots)) {
             const hoe = findHoeIndex(teamSize, elements);
             const bottle = findBottleIndex(teamSize, professions);
             if (!passesItemMode(itemMode, teamSize, hoe, bottle)) continue;
+            const key = assignmentKey(elements, professions);
+            if (seenAssignments.has(key)) continue;
+            seenAssignments.add(key);
             out.push({ elements, professions, hoe, bottle });
             count++;
             if (count > 10_000) {
