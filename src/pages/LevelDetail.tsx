@@ -31,7 +31,8 @@ export default function LevelDetail() {
                     <span className="text-gray-900 font-medium truncate">{levelData.name}</span>
                 </nav>
 
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                {/* overflow-visible: level content may use anchored dropdowns (e.g. Zuo2026) */}
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-visible">
                     <div className="px-8 py-8 border-b border-gray-100">
                         <div className="flex items-center justify-between gap-4 mb-2"> {/* 修改: justify-between */}
                             <div className="flex items-baseline gap-4">

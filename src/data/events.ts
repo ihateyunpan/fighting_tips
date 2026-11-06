@@ -12,8 +12,9 @@ export const EVENTS = {
     DUNGEON_19: { id: '2', name: '十九期地宫', active: false },
     KPI: { id: '3', name: '夜以继日的绩效考核', active: false },
     YUAN2026: { id: '4', name: '独夜灯影', active: false },
-    DUNGEON23: { id: '5', name: '二十三期地宫', active: true },
-    HALF_ANNI_2026: { id: '6', name: '何意泰山倾', active: true },
+    DUNGEON23: { id: '5', name: '二十三期地宫', active: false },
+    HALF_ANNI_2026: { id: '6', name: '何意泰山倾', active: false },
+    ZUO2026: { id: '7', name: '建木培植志', active: true },
     AGENT: { id: '999', name: '密探', active: true },
 } as const;
 

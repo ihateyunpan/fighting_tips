@@ -13,6 +13,7 @@ const Yuan2026L3 = lazy(() => import('./Yuan2026/L3'));
 const Yuan2026L5 = lazy(() => import('./Yuan2026/L5'));
 const Relic20L2 = lazy(() => import('./Relic20/L2'));
 const HalfAnniversary2026Pond = lazy(() => import('./HalfAnniversary2026/Pond'));
+const Zuo2026Team = lazy(() => import('./Zuo2026'));
 
 // 404 组件
 const NotFound = () => (
@@ -34,6 +35,7 @@ const contentMap: Record<string, LazyComponent> = {
     '6': Yuan2026L3,
     '7': Relic20L2,
     '8': HalfAnniversary2026Pond,
+    '9': Zuo2026Team,
     '999': FaZheng,
 };
 

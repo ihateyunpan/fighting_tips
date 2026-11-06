@@ -16,5 +16,6 @@ export const levels: Level[] = [
     { id: '6', name: '董奉', event: 'YUAN2026', level: '归来兮3' },
     { id: '7', name: '孙静', event: 'DUNGEON23', level: '遗迹2' },
     { id: '8', name: '庞德', event: 'HALF_ANNI_2026', level: '谜域' },
+    { id: '9', name: '配队', event: 'ZUO2026', level: '' },
     { id: '999', name: '法正', event: 'AGENT', level: '' },
 ];
